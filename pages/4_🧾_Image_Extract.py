@@ -424,15 +424,39 @@ def extract_alliance_power(text: str) -> dict[str, Any]:
 
 def clean_gamer_tag(raw: str) -> tuple[str, str]:
     cleaned = normalize_spaces(raw)
-    tokens = re.findall(r"[A-Za-z0-9]{2,}", cleaned)
-    if tokens:
-        # Preserve likely multi-word names like "Saint Kaiser".
-        if len(tokens) >= 2 and all(re.fullmatch(r"[A-Za-z]{2,}", t) for t in tokens[:2]):
-            cleaned = f"{tokens[0]}{tokens[1]}"
-        else:
-            cleaned = max(tokens, key=len)
+    cleaned = re.sub(r"^[^A-Za-z0-9]+", "", cleaned)
+    cleaned = re.sub(r"[^A-Za-z0-9 ]+", " ", cleaned)
+    cleaned = normalize_spaces(cleaned)
+
+    tokens = re.findall(r"[A-Za-z0-9]+", cleaned)
+    if not tokens:
+        return "*", "gamer tag uncertain"
+
+    while len(tokens) >= 2 and re.fullmatch(r"[A-Za-z]{1,2}", tokens[0]):
+        tokens = tokens[1:]
+    while len(tokens) >= 2 and re.fullmatch(r"[A-Za-z]{1,2}", tokens[-1]):
+        tokens = tokens[:-1]
+    if (
+        len(tokens) >= 4
+        and re.fullmatch(r"[A-Z]{2,4}", tokens[0])
+        and re.fullmatch(r"[A-Z]{2,4}", tokens[1])
+    ):
+        tokens = tokens[2:]
+
+    if not tokens:
+        return "*", "gamer tag uncertain"
+
+    if all(len(t) <= 2 for t in tokens):
+        return "*", "gamer tag uncertain"
+
+    alpha_tokens = [t for t in tokens if re.fullmatch(r"[A-Za-z]{2,}", t)]
+    if len(alpha_tokens) >= 2:
+        cleaned = f"{alpha_tokens[-2]}{alpha_tokens[-1]}"
+    elif len(alpha_tokens) == 1:
+        cleaned = alpha_tokens[0]
     else:
-        cleaned = re.sub(r"[^A-Za-z0-9_\-\.]+", "", cleaned)
+        cleaned = max(tokens, key=len)
+
     if len(cleaned) < 3:
         return "*", "gamer tag uncertain"
     numeric_fix = re.fullmatch(r"[Ss]([0-9]{2,})", cleaned)
@@ -443,13 +467,73 @@ def clean_gamer_tag(raw: str) -> tuple[str, str]:
 
 def split_alliance_and_tag(governor_name: str) -> tuple[str, str, str]:
     cleaned = normalize_spaces(governor_name)
-    cleaned = re.sub(r"\[([A-Za-z0-9]{2,6})J(?=[A-Za-z])", r"[\1]", cleaned)
-    cleaned = re.sub(r"\[([A-Za-z0-9]{2,6})[Il|](?=[A-Za-z0-9])", r"[\1]", cleaned)
-    alliance_match = re.search(r"\[([A-Za-z0-9]{2,6})\]", cleaned)
-    alliance = f"[{alliance_match.group(1)[:3].upper()}]" if alliance_match else ""
-    gamer_raw = re.sub(r"\[[A-Za-z0-9]{2,6}\]", "", cleaned).strip()
+    cleaned = re.sub(r"^[>\-\*\|\s]+", "", cleaned)
+    cleaned = re.sub(r"\[([A-Za-z0-9]{3})[Il|J](?=[A-Za-z0-9])", r"[\1]", cleaned)
+
+    alliance = ""
+    marker_start = -1
+    marker_end = -1
+
+    m = re.search(r"[\[\(\{]\s*([A-Za-z0-9]{3})\s*[\]\)\}]", cleaned)
+    if not m:
+        m = re.search(r"([A-Za-z0-9]{3})\s*[\]\)\}]", cleaned)
+    if not m:
+        m = re.search(r"[\[\(\{]\s*([A-Za-z0-9]{3})\b", cleaned)
+    if m:
+        alliance = f"[{m.group(1)[:3].upper()}]"
+        marker_start, marker_end = m.span()
+
+    if marker_start >= 0:
+        before = normalize_spaces(cleaned[:marker_start])
+        after = normalize_spaces(cleaned[marker_end:])
+        after_tokens = re.findall(r"[A-Za-z0-9]{2,}", after)
+        before_tokens = re.findall(r"[A-Za-z0-9]{2,}", before)
+        if after_tokens:
+            gamer_raw = after
+        elif before_tokens:
+            gamer_raw = before
+        else:
+            gamer_raw = cleaned
+    else:
+        gamer_raw = cleaned
+
     gamer_tag, comment = clean_gamer_tag(gamer_raw)
     return alliance, gamer_tag, comment
+
+
+def mystic_row_quality(alliance: str, gamer_tag: str, comment: str) -> float:
+    quality = 0.0
+    if alliance:
+        quality += 2.0
+    if gamer_tag and gamer_tag != "*":
+        quality += 2.0
+    if not comment:
+        quality += 1.0
+    quality += min(len(gamer_tag), 16) / 16
+    return quality
+
+
+def refine_governor_text(image: Image.Image, row_idx: int, row_count: int = 9) -> str:
+    base = ImageOps.exif_transpose(image).convert("RGB")
+    row_top, row_bottom = 0.16, 0.93
+    row_h = (row_bottom - row_top) / row_count
+    y1 = row_top + row_idx * row_h
+    y2 = y1 + row_h
+    governor_crop = crop_rel(base, 0.20, y1, 0.77, y2)
+
+    best_text = ""
+    best_score = -1.0
+    for variant in preprocess_variants(governor_crop)[:3]:
+        for config in ("--oem 3 --psm 7", "--oem 3 --psm 6"):
+            text, conf = ocr_text_conf(variant, config)
+            cleaned = normalize_spaces(strip_leading_rank(text))
+            if not cleaned:
+                continue
+            score = conf + min(len(cleaned), 20) / 4
+            if score > best_score:
+                best_score = score
+                best_text = cleaned
+    return best_text
 
 
 def extract_mystic_rows(text: str) -> tuple[list[dict[str, str]], set[str]]:
@@ -528,7 +612,7 @@ def extract_mystic_rows_structured(image: Image.Image) -> tuple[list[dict[str, s
     tags: set[str] = set()
     confs: list[float] = []
 
-    for row in rows_by_y:
+    for row_idx, row in enumerate(rows_by_y):
         governor_text, governor_conf = row_text(row, 0.20, 0.77)
         score_text, score_conf = row_text(row, 0.66, 0.99)
         confs.extend([governor_conf, score_conf])
@@ -540,7 +624,18 @@ def extract_mystic_rows_structured(image: Image.Image) -> tuple[list[dict[str, s
         if score <= 1800:
             continue
 
-        alliance, gamer_tag, comment = split_alliance_and_tag(strip_leading_rank(governor_text))
+        cleaned_governor = strip_leading_rank(governor_text)
+        alliance, gamer_tag, comment = split_alliance_and_tag(cleaned_governor)
+        base_quality = mystic_row_quality(alliance, gamer_tag, comment)
+        should_refine = (not alliance) or gamer_tag == "*" or len(gamer_tag) <= 4
+        if should_refine:
+            refined_text = refine_governor_text(image, row_idx=row_idx, row_count=9)
+            if refined_text:
+                r_alliance, r_gamer_tag, r_comment = split_alliance_and_tag(refined_text)
+                refined_quality = mystic_row_quality(r_alliance, r_gamer_tag, r_comment)
+                if refined_quality > base_quality:
+                    alliance, gamer_tag, comment = r_alliance, r_gamer_tag, r_comment
+
         tags |= extract_tags(alliance)
         rows.append(
             {
