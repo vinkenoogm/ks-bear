@@ -5,3 +5,4 @@ __pycache__/
 .idea/
 .env
 .streamlit/secrets.toml
+img/
