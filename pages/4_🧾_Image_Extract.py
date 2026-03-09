@@ -145,6 +145,22 @@ def ocr_candidates(image: Image.Image) -> list[tuple[str, float]]:
     return results
 
 
+def quick_classify_text(image: Image.Image) -> str:
+    if not pytesseract:
+        return ""
+    base = ImageOps.exif_transpose(image).convert("RGB")
+    gray = ImageOps.grayscale(base)
+    contrasted = ImageOps.autocontrast(gray)
+    try:
+        return pytesseract.image_to_string(
+            contrasted,
+            config="--oem 3 --psm 6",
+            timeout=OCR_TIMEOUT_SECONDS,
+        ).strip()
+    except RuntimeError:
+        return ""
+
+
 def classify_text(text: str) -> str:
     lower = text.lower()
     if re.search(r"(kingdom|kinadom)", lower) and ("details" in lower or "transfer" in lower):
@@ -200,36 +216,119 @@ def normalize_alliance_name(name: str) -> str:
     return fallback
 
 
-def extract_alliance_power_structured(image: Image.Image) -> tuple[dict[str, Any], float]:
-    base = ImageOps.exif_transpose(image).convert("RGB")
-    row_top, row_bottom, row_count = 0.16, 0.93, 9
-    row_h = (row_bottom - row_top) / row_count
+def image_words(image: Image.Image, psm: int = 6) -> list[dict[str, float | str]]:
+    if not pytesseract:
+        return []
 
+    base = ImageOps.exif_transpose(image).convert("RGB")
+    gray = ImageOps.grayscale(base)
+    contrasted = ImageOps.autocontrast(gray)
+    upscaled = contrasted.resize((contrasted.width * 2, contrasted.height * 2), Image.Resampling.LANCZOS)
+    variants = [upscaled, contrasted]
+
+    for variant in variants:
+        try:
+            data = pytesseract.image_to_data(
+                variant,
+                config=f"--oem 3 --psm {psm}",
+                output_type=pytesseract.Output.DICT,
+                timeout=OCR_TIMEOUT_SECONDS,
+            )
+        except RuntimeError:
+            continue
+
+        width = max(variant.width, 1)
+        height = max(variant.height, 1)
+        words: list[dict[str, float | str]] = []
+        for i, raw in enumerate(data.get("text", [])):
+            text = normalize_spaces(str(raw))
+            if not text:
+                continue
+            try:
+                conf = float(data.get("conf", ["-1"])[i])
+            except (TypeError, ValueError, IndexError):
+                conf = -1.0
+            if conf < 0:
+                continue
+
+            try:
+                left = float(data.get("left", [0])[i])
+                top = float(data.get("top", [0])[i])
+                w = float(data.get("width", [0])[i])
+                h = float(data.get("height", [0])[i])
+            except (TypeError, ValueError, IndexError):
+                continue
+
+            words.append(
+                {
+                    "text": text,
+                    "conf": conf,
+                    "x1": left / width,
+                    "x2": (left + w) / width,
+                    "y1": top / height,
+                    "y2": (top + h) / height,
+                    "xc": (left + (w / 2)) / width,
+                    "yc": (top + (h / 2)) / height,
+                }
+            )
+
+        if len(words) >= 8:
+            return words
+        if words:
+            return words
+
+    return []
+
+
+def table_rows(words: list[dict[str, float | str]], row_count: int = 9) -> list[list[dict[str, float | str]]]:
+    row_top, row_bottom = 0.16, 0.93
+    row_h = (row_bottom - row_top) / row_count
+    rows: list[list[dict[str, float | str]]] = [[] for _ in range(row_count)]
+
+    for word in words:
+        yc = float(word["yc"])
+        if yc < row_top or yc > row_bottom:
+            continue
+        idx = int((yc - row_top) / row_h)
+        if idx < 0:
+            idx = 0
+        if idx >= row_count:
+            idx = row_count - 1
+        rows[idx].append(word)
+
+    for row in rows:
+        row.sort(key=lambda item: (float(item["xc"]), float(item["yc"])))
+    return rows
+
+
+def row_text(row_words: list[dict[str, float | str]], x1: float, x2: float) -> tuple[str, float]:
+    selected = [
+        w for w in row_words if float(w["xc"]) >= x1 and float(w["xc"]) <= x2
+    ]
+    if not selected:
+        return "", 0.0
+    selected.sort(key=lambda item: float(item["xc"]))
+    text = normalize_spaces(" ".join(str(w["text"]) for w in selected))
+    avg_conf = sum(float(w["conf"]) for w in selected) / len(selected)
+    return text, avg_conf
+
+
+def extract_alliance_power_structured(image: Image.Image) -> tuple[dict[str, Any], float]:
+    words = image_words(image, psm=6)
+    rows = table_rows(words, row_count=9)
     parsed: list[tuple[str, int]] = []
     confs: list[float] = []
-    for i in range(row_count):
-        y1 = row_top + i * row_h
-        y2 = y1 + row_h
-        name_crop = crop_rel(base, 0.23, y1, 0.74, y2)
-        score_crop = crop_rel(base, 0.70, y1, 0.98, y2)
+    for row in rows:
+        raw_name, name_conf = row_text(row, 0.20, 0.77)
+        raw_score, score_conf = row_text(row, 0.66, 0.99)
 
-        raw_name, name_conf = best_crop_text(
-            name_crop, ["--oem 3 --psm 7", "--oem 3 --psm 6", "--oem 3 --psm 11"]
-        )
-        raw_score, score_conf = best_crop_text(
-            score_crop,
-            [
-                "--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789,.",
-                "--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789,.",
-            ],
-        )
-        num_match = re.search(r"\d[\d,\.]{3,}", raw_score)
+        num_match = re.search(r"\d[\d,\.]{3,}", raw_score.replace(" ", ""))
         if not num_match:
             continue
         score = number_to_int(num_match.group(0))
         if score < 100000:
             continue
-        name = normalize_alliance_name(raw_name)
+        name = normalize_alliance_name(strip_leading_rank(raw_name))
         if not name:
             continue
         parsed.append((name, score))
@@ -423,40 +522,25 @@ def extract_mystic_rows(text: str) -> tuple[list[dict[str, str]], set[str]]:
 
 
 def extract_mystic_rows_structured(image: Image.Image) -> tuple[list[dict[str, str]], set[str], float]:
-    base = ImageOps.exif_transpose(image).convert("RGB")
-    row_top, row_bottom, row_count = 0.16, 0.93, 9
-    row_h = (row_bottom - row_top) / row_count
-
+    words = image_words(image, psm=6)
+    rows_by_y = table_rows(words, row_count=9)
     rows: list[dict[str, str]] = []
     tags: set[str] = set()
     confs: list[float] = []
 
-    for i in range(row_count):
-        y1 = row_top + i * row_h
-        y2 = y1 + row_h
-        governor_crop = crop_rel(base, 0.23, y1, 0.74, y2)
-        score_crop = crop_rel(base, 0.70, y1, 0.98, y2)
-
-        governor_text, governor_conf = best_crop_text(
-            governor_crop, ["--oem 3 --psm 7", "--oem 3 --psm 6", "--oem 3 --psm 11"]
-        )
-        score_text, score_conf = best_crop_text(
-            score_crop,
-            [
-                "--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789,.",
-                "--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789,.",
-            ],
-        )
+    for row in rows_by_y:
+        governor_text, governor_conf = row_text(row, 0.20, 0.77)
+        score_text, score_conf = row_text(row, 0.66, 0.99)
         confs.extend([governor_conf, score_conf])
 
-        num_match = re.search(r"\d[\d,\.]{2,}", score_text)
+        num_match = re.search(r"\d[\d,\.]{2,}", score_text.replace(" ", ""))
         if not num_match:
             continue
         score = number_to_int(num_match.group(0))
         if score <= 1800:
             continue
 
-        alliance, gamer_tag, comment = split_alliance_and_tag(governor_text)
+        alliance, gamer_tag, comment = split_alliance_and_tag(strip_leading_rank(governor_text))
         tags |= extract_tags(alliance)
         rows.append(
             {
@@ -635,15 +719,26 @@ def run_extraction(files: list[Any]) -> tuple[pd.DataFrame, list[dict[str, str]]
 
     for idx, uploaded_file in enumerate(files):
         image = Image.open(io.BytesIO(uploaded_file.getvalue()))
-        candidates = ocr_candidates(image)
-        combined_text = "\n".join(text for text, _ in candidates)
-        screen_type = classify_text(combined_text)
+        candidates: list[tuple[str, float]] | None = None
+
+        def get_candidates() -> list[tuple[str, float]]:
+            nonlocal candidates
+            if candidates is None:
+                candidates = ocr_candidates(image)
+            return candidates
+
+        quick_text = quick_classify_text(image)
+        screen_type = classify_text(quick_text)
+        if screen_type == "unknown":
+            fallback_text = "\n".join(text for text, _ in get_candidates())
+            screen_type = classify_text(fallback_text)
 
         if screen_type == "kingdom":
-            best_text, best_conf, parsed = choose_best_candidate(candidates, extract_kingdom)
+            kingdom_candidates = get_candidates()
+            best_text, best_conf, parsed = choose_best_candidate(kingdom_candidates, extract_kingdom)
             data = parsed if isinstance(parsed, dict) else extract_kingdom(best_text)
             if not data.get("transfers_used"):
-                for text, _ in candidates:
+                for text, _ in kingdom_candidates:
                     candidate_data = extract_kingdom(text)
                     if candidate_data.get("transfers_used"):
                         data["transfers_used"] = candidate_data["transfers_used"]
@@ -664,15 +759,15 @@ def run_extraction(files: list[Any]) -> tuple[pd.DataFrame, list[dict[str, str]]
                 }
             )
         elif screen_type == "alliance_power":
-            fallback_data, fallback_conf = extract_best_alliance_power(candidates)
-            if alliance_data_complete(fallback_data):
-                data, best_conf = fallback_data, fallback_conf
+            structured_data, structured_conf = extract_alliance_power_structured(image)
+            if alliance_data_complete(structured_data):
+                data, best_conf = structured_data, structured_conf
             else:
-                structured_data, structured_conf = extract_alliance_power_structured(image)
-                if alliance_data_complete(structured_data):
-                    data, best_conf = structured_data, structured_conf
-                else:
+                fallback_data, fallback_conf = extract_best_alliance_power(get_candidates())
+                if alliance_data_complete(fallback_data):
                     data, best_conf = fallback_data, fallback_conf
+                else:
+                    data, best_conf = structured_data, structured_conf
             tags = data["alliance_tags"]
             ctx = best_context(contexts=contexts, tags=tags)
             if ctx:
@@ -696,13 +791,13 @@ def run_extraction(files: list[Any]) -> tuple[pd.DataFrame, list[dict[str, str]]
                 }
             )
         elif screen_type == "mystic_trial":
-            fallback_rows, fallback_tags, fallback_conf = extract_best_mystic_rows(candidates)
-            if len(fallback_rows) >= 3:
-                parsed_rows = fallback_rows
-                tags = fallback_tags
-                best_conf = fallback_conf
+            structured_rows, structured_tags, structured_conf = extract_mystic_rows_structured(image)
+            if len(structured_rows) >= 3:
+                parsed_rows = structured_rows
+                tags = structured_tags
+                best_conf = structured_conf
             else:
-                structured_rows, structured_tags, structured_conf = extract_mystic_rows_structured(image)
+                fallback_rows, fallback_tags, fallback_conf = extract_best_mystic_rows(get_candidates())
                 parsed_rows = merge_mystic_rows(structured_rows, fallback_rows)
                 tags = structured_tags | fallback_tags
                 best_conf = max(structured_conf, fallback_conf)
@@ -762,7 +857,8 @@ def run_extraction(files: list[Any]) -> tuple[pd.DataFrame, list[dict[str, str]]
                 }
             )
         else:
-            best_conf = max((conf for _, conf in candidates), default=0.0)
+            cands = get_candidates()
+            best_conf = max((conf for _, conf in cands), default=0.0)
             file_meta.append(
                 {
                     "file": uploaded_file.name,
