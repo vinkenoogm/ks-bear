@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 from PIL import Image, ImageOps
 
-from config.settings import TESSERACT_CMD
+from config.settings import OCR_TIMEOUT_SECONDS, TESSERACT_CMD
 
 try:
     import pytesseract
@@ -52,9 +52,15 @@ def preprocess_variants(image: Image.Image) -> list[Image.Image]:
 def ocr_confidence(image: Image.Image, psm: int) -> float:
     if not pytesseract:
         return 0.0
-    data = pytesseract.image_to_data(
-        image, config=f"--oem 3 --psm {psm}", output_type=pytesseract.Output.DICT
-    )
+    try:
+        data = pytesseract.image_to_data(
+            image,
+            config=f"--oem 3 --psm {psm}",
+            output_type=pytesseract.Output.DICT,
+            timeout=OCR_TIMEOUT_SECONDS,
+        )
+    except RuntimeError:
+        return 0.0
     confs: list[float] = []
     for conf in data.get("conf", []):
         try:
@@ -71,8 +77,18 @@ def ocr_confidence(image: Image.Image, psm: int) -> float:
 def ocr_text_conf(image: Image.Image, config: str) -> tuple[str, float]:
     if not pytesseract:
         return "", 0.0
-    text = pytesseract.image_to_string(image, config=config).strip()
-    data = pytesseract.image_to_data(image, config=config, output_type=pytesseract.Output.DICT)
+    try:
+        text = pytesseract.image_to_string(
+            image, config=config, timeout=OCR_TIMEOUT_SECONDS
+        ).strip()
+        data = pytesseract.image_to_data(
+            image,
+            config=config,
+            output_type=pytesseract.Output.DICT,
+            timeout=OCR_TIMEOUT_SECONDS,
+        )
+    except RuntimeError:
+        return "", 0.0
     confs: list[float] = []
     for conf in data.get("conf", []):
         try:
@@ -115,7 +131,14 @@ def ocr_candidates(image: Image.Image) -> list[tuple[str, float]]:
     results: list[tuple[str, float]] = []
     for variant in preprocess_variants(image):
         for psm in (6, 4, 11):
-            text = pytesseract.image_to_string(variant, config=f"--oem 3 --psm {psm}")
+            try:
+                text = pytesseract.image_to_string(
+                    variant,
+                    config=f"--oem 3 --psm {psm}",
+                    timeout=OCR_TIMEOUT_SECONDS,
+                )
+            except RuntimeError:
+                continue
             cleaned = text.strip()
             if cleaned:
                 results.append((cleaned, ocr_confidence(variant, psm)))
@@ -598,6 +621,13 @@ def choose_best_candidate(
     return best_text, best_conf, best_parsed
 
 
+def alliance_data_complete(data: dict[str, Any]) -> bool:
+    power = number_to_int(data.get("combined_power_top3", "0") or "0")
+    return bool(data.get("combined_power_top3")) and power >= 5_000_000_000 and len(
+        data.get("alliance_tags", set())
+    ) >= 2
+
+
 def run_extraction(files: list[Any]) -> tuple[pd.DataFrame, list[dict[str, str]]]:
     contexts: list[Context] = []
     all_rows: list[dict[str, Any]] = []
@@ -634,18 +664,15 @@ def run_extraction(files: list[Any]) -> tuple[pd.DataFrame, list[dict[str, str]]
                 }
             )
         elif screen_type == "alliance_power":
-            structured_data, structured_conf = extract_alliance_power_structured(image)
             fallback_data, fallback_conf = extract_best_alliance_power(candidates)
-            structured_power = number_to_int(structured_data.get("combined_power_top3", "0") or "0")
-            structured_ok = (
-                bool(structured_data.get("combined_power_top3"))
-                and structured_power >= 5_000_000_000
-                and len(structured_data.get("alliance_tags", set())) >= 2
-            )
-            if structured_ok:
-                data, best_conf = structured_data, structured_conf
-            else:
+            if alliance_data_complete(fallback_data):
                 data, best_conf = fallback_data, fallback_conf
+            else:
+                structured_data, structured_conf = extract_alliance_power_structured(image)
+                if alliance_data_complete(structured_data):
+                    data, best_conf = structured_data, structured_conf
+                else:
+                    data, best_conf = fallback_data, fallback_conf
             tags = data["alliance_tags"]
             ctx = best_context(contexts=contexts, tags=tags)
             if ctx:
@@ -669,11 +696,16 @@ def run_extraction(files: list[Any]) -> tuple[pd.DataFrame, list[dict[str, str]]
                 }
             )
         elif screen_type == "mystic_trial":
-            structured_rows, structured_tags, structured_conf = extract_mystic_rows_structured(image)
             fallback_rows, fallback_tags, fallback_conf = extract_best_mystic_rows(candidates)
-            parsed_rows = merge_mystic_rows(structured_rows, fallback_rows)
-            tags = structured_tags | fallback_tags
-            best_conf = max(structured_conf, fallback_conf)
+            if len(fallback_rows) >= 3:
+                parsed_rows = fallback_rows
+                tags = fallback_tags
+                best_conf = fallback_conf
+            else:
+                structured_rows, structured_tags, structured_conf = extract_mystic_rows_structured(image)
+                parsed_rows = merge_mystic_rows(structured_rows, fallback_rows)
+                tags = structured_tags | fallback_tags
+                best_conf = max(structured_conf, fallback_conf)
             ctx = best_context(contexts=contexts, tags=tags)
             if ctx:
                 overlap = len(tags & ctx.alliance_tags)
