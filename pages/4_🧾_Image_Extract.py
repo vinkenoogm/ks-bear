@@ -174,14 +174,22 @@ def classify_text(text: str) -> str:
 
 def extract_kingdom(text: str) -> dict[str, str]:
     kingdom_match = re.search(r"Kingdom\s*#?\s*(\d+)", text, flags=re.IGNORECASE)
-    transfer_match = re.search(
-        r"Transfer\s*Req\.?\s*\((\d+)\s*/\s*\d+\)", text, flags=re.IGNORECASE
+    transfers_used = ""
+    transfer_pair = re.search(
+        r"Transfer\s*(?:Cap|Req\.?)?\s*[:\(]?\s*(\d+)\s*/\s*(\d+)\)?",
+        text,
+        flags=re.IGNORECASE,
     )
-    transfers_used = transfer_match.group(1) if transfer_match else ""
-    if not transfers_used:
-        generic_req = re.search(r"Req\.?\s*\((\d+)\s*/\s*7\)", text, flags=re.IGNORECASE)
+    if transfer_pair:
+        current = int(transfer_pair.group(1))
+        total = int(transfer_pair.group(2))
+        transfers_used = str(max(total - current, 0))
+    else:
+        generic_req = re.search(r"Req\.?\s*\((\d+)\s*/\s*(\d+)\)", text, flags=re.IGNORECASE)
         if generic_req:
-            transfers_used = generic_req.group(1)
+            current = int(generic_req.group(1))
+            total = int(generic_req.group(2))
+            transfers_used = str(max(total - current, 0))
     return {
         "kingdom": kingdom_match.group(1) if kingdom_match else "",
         "transfers_used": transfers_used,
