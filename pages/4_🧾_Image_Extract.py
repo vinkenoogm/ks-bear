@@ -992,7 +992,9 @@ def run_extraction(files: list[Any]) -> tuple[pd.DataFrame, list[dict[str, str]]
 st.title("Image Extract")
 
 st.caption(
-    "Upload any number of screenshots. Rows are created for Mystic Trial entries above 1800."
+    "Upload any number of screenshots. A set of screenshots should consist of (1) the kingdom details screen "
+    "(showing transfer cap etc), (2) the mystic trials leaderboard, and (3) alliance power leaderboard."
+    "Rows are created for Mystic Trial entries above 1800."
 )
 
 uploaded_files = st.file_uploader(
