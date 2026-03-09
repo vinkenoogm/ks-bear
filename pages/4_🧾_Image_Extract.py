@@ -29,6 +29,7 @@ class Context:
     used_fallback_match: bool = False
     kingdom_ocr_conf: float = 0.0
     alliance_ocr_conf: float = 0.0
+    alliance_comment: str = ""
 
 
 def normalize_spaces(value: str) -> str:
@@ -48,10 +49,12 @@ def preprocess_variants(image: Image.Image) -> list[Image.Image]:
     return [base, contrasted, upscaled, thresholded.convert("L")]
 
 
-def ocr_confidence(image: Image.Image) -> float:
+def ocr_confidence(image: Image.Image, psm: int) -> float:
     if not pytesseract:
         return 0.0
-    data = pytesseract.image_to_data(image, config="--psm 6", output_type=pytesseract.Output.DICT)
+    data = pytesseract.image_to_data(
+        image, config=f"--oem 3 --psm {psm}", output_type=pytesseract.Output.DICT
+    )
     confs: list[float] = []
     for conf in data.get("conf", []):
         try:
@@ -70,21 +73,22 @@ def ocr_candidates(image: Image.Image) -> list[tuple[str, float]]:
         return []
     results: list[tuple[str, float]] = []
     for variant in preprocess_variants(image):
-        text = pytesseract.image_to_string(variant, config="--psm 6")
-        cleaned = text.strip()
-        if cleaned:
-            results.append((cleaned, ocr_confidence(variant)))
+        for psm in (6, 4, 11):
+            text = pytesseract.image_to_string(variant, config=f"--oem 3 --psm {psm}")
+            cleaned = text.strip()
+            if cleaned:
+                results.append((cleaned, ocr_confidence(variant, psm)))
     return results
 
 
 def classify_text(text: str) -> str:
     lower = text.lower()
-    if "kingdom details" in lower:
+    if re.search(r"(kingdom|kinadom)", lower) and ("details" in lower or "transfer" in lower):
         return "kingdom"
-    if "alliance power" in lower:
-        return "alliance_power"
-    if "mystic trial" in lower:
+    if "mystic" in lower and "trial" in lower:
         return "mystic_trial"
+    if ("alliance power" in lower) or ("alliance" in lower and "ranking" in lower and "power" in lower):
+        return "alliance_power"
     return "unknown"
 
 
@@ -93,9 +97,14 @@ def extract_kingdom(text: str) -> dict[str, str]:
     transfer_match = re.search(
         r"Transfer\s*Req\.?\s*\((\d+)\s*/\s*\d+\)", text, flags=re.IGNORECASE
     )
+    transfers_used = transfer_match.group(1) if transfer_match else ""
+    if not transfers_used:
+        generic_req = re.search(r"Req\.?\s*\((\d+)\s*/\s*7\)", text, flags=re.IGNORECASE)
+        if generic_req:
+            transfers_used = generic_req.group(1)
     return {
         "kingdom": kingdom_match.group(1) if kingdom_match else "",
-        "transfers_used": transfer_match.group(1) if transfer_match else "",
+        "transfers_used": transfers_used,
     }
 
 
@@ -108,34 +117,28 @@ def strip_leading_rank(text: str) -> str:
 
 
 def extract_tags(value: str) -> set[str]:
-    tags = {tag.upper() for tag in re.findall(r"\[([A-Za-z0-9]{2,6})\]", value)}
-    tags |= {tag.upper() for tag in re.findall(r"\[([A-Za-z0-9]{2,6})(?=[A-Za-z0-9])", value)}
+    tags = {tag[:3].upper() for tag in re.findall(r"\[([A-Za-z0-9]{2,6})\]", value)}
+    tags |= {tag[:3].upper() for tag in re.findall(r"\[([A-Za-z0-9]{2,6})(?=[A-Za-z0-9])", value)}
     return tags
 
 
 def normalize_alliance_name(name: str) -> str:
     cleaned = normalize_spaces(name)
-    cleaned = cleaned.replace("]", "] ")
-    cleaned = re.sub(r"[^A-Za-z0-9\[\] ]+", " ", cleaned)
+    cleaned = re.sub(r"^[^[]*", "", cleaned)
+    cleaned = re.sub(r"[^A-Za-z0-9\[\]\- ]+", " ", cleaned)
     cleaned = normalize_spaces(cleaned)
-    cleaned = re.sub(r"\[([A-Za-z0-9]{2,6})J(?=[A-Za-z])", r"[\1]", cleaned)
-    cleaned = re.sub(r"\[([A-Za-z0-9]{2,6})(?!\])", r"[\1]", cleaned)
-
-    pos = cleaned.find("[")
-    if pos >= 0:
-        cleaned = cleaned[pos:]
-    cleaned = normalize_spaces(cleaned)
-
-    m = re.match(r"\[([A-Za-z0-9]{2,6})\]\s*(.*)", cleaned)
+    m = re.search(r"\[([A-Za-z0-9]{2,6})[\]\|IJl]?\s*([A-Za-z][A-Za-z0-9\-]{1,})", cleaned)
     if m:
-        tag = m.group(1).upper()
+        tag = m.group(1)[:3].upper()
         tail = m.group(2).replace(" ", "")
         return f"[{tag}]{tail.upper()}".strip()
-    return cleaned.upper()
+    fallback = re.sub(r"\s+", "", cleaned).upper()
+    return fallback
 
 
 def extract_alliance_power(text: str) -> dict[str, Any]:
     parsed: list[tuple[str, int]] = []
+    ordered_names: list[str] = []
     for raw in text.splitlines():
         line = normalize_spaces(raw)
         if not line:
@@ -154,48 +157,115 @@ def extract_alliance_power(text: str) -> dict[str, Any]:
         if not name:
             continue
         parsed.append((name, score))
+        if name not in ordered_names:
+            ordered_names.append(name)
 
-    top3 = parsed[:3]
-    if len(top3) < 3:
-        return {"combined_power_top3": "", "top3_alliances": "", "alliance_tags": set()}
+    dedup: dict[int, str] = {}
+    for name, score in parsed:
+        if score not in dedup or len(name) > len(dedup[score]):
+            dedup[score] = name
+    scored = [(name, score) for score, name in sorted(dedup.items(), key=lambda x: x[0], reverse=True)]
+    if len(scored) < 3 and len(ordered_names) < 3:
+        return {"combined_power_top3": "", "top3_alliances": "", "alliance_tags": set(), "ocr_comment": ""}
 
-    combined_power = str(sum(score for _, score in top3))
-    top3_names = " | ".join(name for name, _ in top3)
+    top3_names = ordered_names[:3] if len(ordered_names) >= 3 else [name for name, _ in scored[:3]]
+    score_by_tag: dict[str, int] = {}
+    for name, score in scored:
+        tags = extract_tags(name)
+        if tags:
+            score_by_tag[next(iter(tags))] = score
+
+    top3_scores: list[int] = []
+    missing_power = False
+    for name in top3_names:
+        tags = extract_tags(name)
+        if not tags:
+            missing_power = True
+            continue
+        tag = next(iter(tags))
+        if tag in score_by_tag:
+            top3_scores.append(score_by_tag[tag])
+        else:
+            missing_power = True
+
+    combined_power = str(sum(top3_scores)) if top3_scores and not missing_power else ""
+    top3_names_str = " | ".join(top3_names)
+    ocr_comment = "top 3 alliance power incomplete" if missing_power else ""
     top3_tags = set()
-    for name, _ in top3:
+    for name in top3_names:
         top3_tags |= extract_tags(name)
-    return {"combined_power_top3": combined_power, "top3_alliances": top3_names, "alliance_tags": top3_tags}
+    return {
+        "combined_power_top3": combined_power,
+        "top3_alliances": top3_names_str,
+        "alliance_tags": top3_tags,
+        "ocr_comment": ocr_comment,
+    }
 
 
-def split_alliance_and_tag(governor_name: str) -> tuple[str, str]:
+def clean_gamer_tag(raw: str) -> tuple[str, str]:
+    cleaned = normalize_spaces(raw)
+    tokens = re.findall(r"[A-Za-z0-9]{2,}", cleaned)
+    if tokens:
+        # Prefer the longest token to discard OCR ornament noise around avatars/icons.
+        cleaned = max(tokens, key=len)
+    else:
+        cleaned = re.sub(r"[^A-Za-z0-9_\-\.]+", "", cleaned)
+    if len(cleaned) < 3:
+        return "*", "gamer tag uncertain"
+    return cleaned, ""
+
+
+def split_alliance_and_tag(governor_name: str) -> tuple[str, str, str]:
     cleaned = normalize_spaces(governor_name)
     cleaned = re.sub(r"\[([A-Za-z0-9]{2,6})J(?=[A-Za-z])", r"[\1]", cleaned)
+    cleaned = re.sub(r"\[([A-Za-z0-9]{2,6})[Il|](?=[A-Za-z0-9])", r"[\1]", cleaned)
     alliance_match = re.search(r"\[([A-Za-z0-9]{2,6})\]", cleaned)
-    alliance = f"[{alliance_match.group(1).upper()}]" if alliance_match else ""
-    gamer_tag = re.sub(r"\[[A-Za-z0-9]{2,6}\]", "", cleaned).strip()
-    return alliance, gamer_tag
+    alliance = f"[{alliance_match.group(1)[:3].upper()}]" if alliance_match else ""
+    gamer_raw = re.sub(r"\[[A-Za-z0-9]{2,6}\]", "", cleaned).strip()
+    gamer_tag, comment = clean_gamer_tag(gamer_raw)
+    return alliance, gamer_tag, comment
 
 
 def extract_mystic_rows(text: str) -> tuple[list[dict[str, str]], set[str]]:
     rows: list[dict[str, str]] = []
     tags: set[str] = set()
-    for raw in text.splitlines():
-        line = normalize_spaces(raw)
+    lines = [normalize_spaces(raw) for raw in text.splitlines()]
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         if not line:
+            i += 1
             continue
         lower = line.lower()
         if any(word in lower for word in ("ranking", "governor", "total stages", "mystic trial")):
+            i += 1
             continue
 
         num_match = trailing_number(line)
+        governor = ""
         if not num_match:
-            continue
-        score = number_to_int(num_match.group(1))
+            # OCR sometimes puts name and score on separate consecutive lines.
+            next_line = lines[i + 1] if i + 1 < len(lines) else ""
+            next_num_match = trailing_number(next_line) if next_line else None
+            if re.search(r"\[[A-Za-z0-9]{2,6}\]", line) and next_num_match:
+                governor = strip_leading_rank(line)
+                score = number_to_int(next_num_match.group(1))
+                i += 2
+            else:
+                i += 1
+                continue
+        else:
+            score = number_to_int(num_match.group(1))
+            governor = strip_leading_rank(line[: num_match.start()].strip())
+            i += 1
+
         if score <= 1800:
             continue
 
-        governor = strip_leading_rank(line[: num_match.start()].strip())
-        alliance, gamer_tag = split_alliance_and_tag(governor)
+        if not governor:
+            continue
+
+        alliance, gamer_tag, comment = split_alliance_and_tag(governor)
         tags |= extract_tags(alliance)
 
         rows.append(
@@ -203,9 +273,80 @@ def extract_mystic_rows(text: str) -> tuple[list[dict[str, str]], set[str]]:
                 "Alliance": alliance,
                 "Mystic trial": str(score),
                 "Gamer tag": gamer_tag,
+                "OCR comment": comment,
             }
         )
     return rows, tags
+
+
+def extract_best_alliance_power(candidates: list[tuple[str, float]]) -> tuple[dict[str, Any], float]:
+    best = {"combined_power_top3": "", "top3_alliances": "", "alliance_tags": set(), "ocr_comment": ""}
+    best_conf = 0.0
+    best_score = -1.0
+    for text, conf in candidates:
+        parsed = extract_alliance_power(text)
+        tags = parsed["alliance_tags"]
+        if not parsed["combined_power_top3"]:
+            continue
+        score = len(tags) * 2 + conf / 20
+        score += number_to_int(parsed["combined_power_top3"]) / 10_000_000_000
+        if score > best_score:
+            best = parsed
+            best_conf = conf
+            best_score = score
+    return best, best_conf
+
+
+def extract_best_mystic_rows(candidates: list[tuple[str, float]]) -> tuple[list[dict[str, str]], set[str], float]:
+    by_score: dict[str, tuple[dict[str, str], float]] = {}
+    tags: set[str] = set()
+    for text, conf in candidates:
+        rows, row_tags = extract_mystic_rows(text)
+        tags |= row_tags
+        for row in rows:
+            score = row["Mystic trial"]
+            quality = 0.0
+            if row["Alliance"]:
+                quality += 2
+            if row["Gamer tag"] != "*":
+                quality += 2
+            if not row["OCR comment"]:
+                quality += 1
+            quality += conf / 25
+            existing = by_score.get(score)
+            if not existing or quality > existing[1]:
+                by_score[score] = (row, quality)
+
+    selected = [data[0] for _, data in sorted(by_score.items(), key=lambda x: int(x[0]), reverse=True)]
+    if not selected:
+        return [], tags, 0.0
+
+    used_names = {r["Gamer tag"] for r in selected if r["Gamer tag"] != "*"}
+    name_candidates: list[tuple[str, str]] = []
+    for text, _ in candidates:
+        for tag, name in re.findall(r"\[([A-Za-z0-9]{2,6})\]\s*([A-Za-z][A-Za-z0-9_]{2,})", text):
+            cleaned_name, comment = clean_gamer_tag(name)
+            if cleaned_name != "*" and cleaned_name not in used_names:
+                alliance = f"[{tag.upper()}]"
+                name_candidates.append((alliance, cleaned_name))
+
+    for row in selected:
+        if row["Gamer tag"] == "*" and name_candidates:
+            preferred = None
+            if row["Alliance"]:
+                for i, candidate in enumerate(name_candidates):
+                    if candidate[0] == row["Alliance"]:
+                        preferred = i
+                        break
+            idx = preferred if preferred is not None else 0
+            alliance, gamer = name_candidates.pop(idx)
+            if not row["Alliance"]:
+                row["Alliance"] = alliance
+            row["Gamer tag"] = gamer
+            row["OCR comment"] = "name recovered from alternate OCR pass"
+
+    avg_conf = sum(conf for _, conf in candidates) / len(candidates)
+    return selected, tags, avg_conf
 
 
 def best_context(contexts: list[Context], tags: set[str]) -> Context | None:
@@ -290,18 +431,21 @@ def run_extraction(files: list[Any]) -> tuple[pd.DataFrame, list[dict[str, str]]
                 }
             )
         elif screen_type == "alliance_power":
-            best_text, best_conf, parsed = choose_best_candidate(candidates, extract_alliance_power)
-            data = parsed if isinstance(parsed, dict) else extract_alliance_power(best_text)
+            data, best_conf = extract_best_alliance_power(candidates)
             tags = data["alliance_tags"]
             ctx = best_context(contexts=contexts, tags=tags)
             if ctx:
                 overlap = len(tags & ctx.alliance_tags)
                 ctx.combined_power_top3 = data["combined_power_top3"] or ctx.combined_power_top3
                 ctx.top3_alliances = data["top3_alliances"] or ctx.top3_alliances
+                ctx.alliance_comment = data.get("ocr_comment", "")
                 ctx.alliance_tags |= tags
                 ctx.alliance_ocr_conf = max(ctx.alliance_ocr_conf, best_conf)
                 if overlap == 0 and tags:
-                    ctx.used_fallback_match = True
+                    if len(contexts) > 1:
+                        ctx.used_fallback_match = True
+                if overlap > 0:
+                    ctx.used_fallback_match = False
             file_meta.append(
                 {
                     "file": uploaded_file.name,
@@ -311,38 +455,38 @@ def run_extraction(files: list[Any]) -> tuple[pd.DataFrame, list[dict[str, str]]
                 }
             )
         elif screen_type == "mystic_trial":
-            best_text, best_conf, parsed = choose_best_candidate(candidates, extract_mystic_rows)
-            if isinstance(parsed, tuple):
-                parsed_rows, tags = parsed
-            else:
-                parsed_rows, tags = extract_mystic_rows(text=best_text)
+            parsed_rows, tags, best_conf = extract_best_mystic_rows(candidates)
             ctx = best_context(contexts=contexts, tags=tags)
             if ctx:
                 overlap = len(tags & ctx.alliance_tags)
                 ctx.alliance_tags |= tags
                 if overlap == 0 and tags:
-                    ctx.used_fallback_match = True
+                    if len(contexts) > 1:
+                        ctx.used_fallback_match = True
+                if overlap > 0:
+                    ctx.used_fallback_match = False
             for parsed in parsed_rows:
                 manual_check = False
                 reasons: list[str] = []
-                if best_conf < 60:
-                    manual_check = True
-                    reasons.append("low mystic OCR confidence")
                 if not ctx or not ctx.kingdom:
                     manual_check = True
                     reasons.append("no kingdom match")
                 if ctx and ctx.used_fallback_match:
                     manual_check = True
                     reasons.append("fallback kingdom match")
-                if not parsed["Alliance"] or not parsed["Gamer tag"]:
+                if not parsed["Alliance"] or parsed["Gamer tag"] == "*":
                     manual_check = True
                     reasons.append("missing alliance or gamer tag")
                 if ctx and (not ctx.top3_alliances or not ctx.combined_power_top3):
                     manual_check = True
                     reasons.append("missing alliance power context")
-                if ctx and (ctx.kingdom_ocr_conf < 60 or ctx.alliance_ocr_conf < 55):
+                row_comment_parts = [parsed["OCR comment"]]
+                if ctx and ctx.alliance_comment:
+                    row_comment_parts.append(ctx.alliance_comment)
+                row_comment = "; ".join(p for p in row_comment_parts if p)
+                if row_comment:
                     manual_check = True
-                    reasons.append("low context OCR confidence")
+                    reasons.append("ocr uncertainty")
 
                 all_rows.append(
                     {
@@ -353,8 +497,9 @@ def run_extraction(files: list[Any]) -> tuple[pd.DataFrame, list[dict[str, str]]
                         "Alliance": parsed["Alliance"],
                         "Mystic trial": parsed["Mystic trial"],
                         "Gamer tag": parsed["Gamer tag"],
+                        "OCR comment": row_comment,
                         "Needs manual check": "yes" if manual_check else "no",
-                        "Manual check reason": "; ".join(sorted(set(reasons))),
+                        "Manual check reason": "; ".join(sorted(set(reasons))) or "none",
                         "Source file": uploaded_file.name,
                     }
                 )
@@ -385,6 +530,7 @@ def run_extraction(files: list[Any]) -> tuple[pd.DataFrame, list[dict[str, str]]
         "Alliance",
         "Mystic trial",
         "Gamer tag",
+        "OCR comment",
         "Needs manual check",
         "Manual check reason",
         "Source file",
@@ -406,32 +552,91 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True,
 )
 
-if st.button("Extract data", type="primary"):
+if "is_extracting" not in st.session_state:
+    st.session_state.is_extracting = False
+if "extracted_df" not in st.session_state:
+    st.session_state.extracted_df = None
+if "file_meta" not in st.session_state:
+    st.session_state.file_meta = None
+if "uploaded_image_bytes" not in st.session_state:
+    st.session_state.uploaded_image_bytes = {}
+
+button_col, status_col = st.columns([1, 2])
+with button_col:
+    start_extract = st.button(
+        "Extract data",
+        type="primary",
+        disabled=st.session_state.is_extracting,
+    )
+with status_col:
+    if st.session_state.is_extracting:
+        st.caption("Extraction in progress...")
+
+if start_extract:
+    st.session_state.is_extracting = True
+    st.rerun()
+
+if st.session_state.is_extracting:
     if not uploaded_files:
+        st.session_state.is_extracting = False
         st.warning("Upload at least one screenshot.")
         st.stop()
 
     if not pytesseract:
+        st.session_state.is_extracting = False
         st.error("`pytesseract` is not installed. Run `pip install -r requirements.txt` first.")
         st.stop()
 
     try:
-        df, meta = run_extraction(uploaded_files)
+        with st.spinner("Extracting data from screenshots..."):
+            df, meta = run_extraction(uploaded_files)
+            st.session_state.extracted_df = df
+            st.session_state.file_meta = meta
+            st.session_state.uploaded_image_bytes = {
+                f.name: f.getvalue() for f in uploaded_files
+            }
     except Exception as exc:
+        st.session_state.is_extracting = False
         if pytesseract and isinstance(exc, pytesseract.TesseractNotFoundError):
             st.error(
                 "Tesseract OCR was not found. Install Tesseract and set TESSERACT_CMD in environment if needed."
             )
             st.stop()
         raise
+    finally:
+        st.session_state.is_extracting = False
+
+if st.session_state.extracted_df is not None:
+    df = pd.DataFrame(st.session_state.extracted_df)
+    meta = pd.DataFrame(st.session_state.file_meta or [])
 
     st.subheader("Detected files")
-    st.dataframe(pd.DataFrame(meta), use_container_width=True, hide_index=True)
+    st.dataframe(meta, use_container_width=True, hide_index=True)
 
-    st.subheader("Extracted rows")
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.subheader("Extracted rows (editable)")
+    edited_df = st.data_editor(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        num_rows="dynamic",
+        disabled=["Source file"],
+    )
+    st.session_state.extracted_df = edited_df
 
-    csv_data = df.to_csv(index=False).encode("utf-8")
+    source_options = sorted(edited_df["Source file"].dropna().unique().tolist()) if not edited_df.empty else []
+    if source_options:
+        st.subheader("Image review")
+        selected_source = st.selectbox("Review source image", options=source_options)
+        left_col, right_col = st.columns([1, 1.2])
+        with left_col:
+            image_bytes = st.session_state.uploaded_image_bytes.get(selected_source)
+            if image_bytes:
+                st.image(image_bytes, caption=selected_source, use_container_width=True)
+        with right_col:
+            review_df = edited_df[edited_df["Source file"] == selected_source]
+            st.dataframe(review_df, use_container_width=True, hide_index=True)
+
+    csv_data = edited_df.to_csv(index=False).encode("utf-8")
     st.download_button(
         "Download extracted.csv",
         data=csv_data,
