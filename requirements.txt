@@ -1,6 +1,9 @@
-streamlit
-pandas
-sqlalchemy
-psycopg2-binary
-python-dotenv
-pytesseract
+streamlit==1.54.0
+pandas==2.3.3
+sqlalchemy==2.0.46
+psycopg2-binary==2.9.11
+python-dotenv==1.2.1
+pytesseract==0.3.13
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.27.3
+Pillow==12.1.1
