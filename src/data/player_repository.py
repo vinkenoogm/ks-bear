@@ -4,10 +4,25 @@ from sqlalchemy import text
 from src.data.db import engine
 
 
+PLAYER_TEXT_COLUMNS = [
+    "name",
+    "game_id",
+    "alliance_rank",
+    "town_center_level",
+    "preferred_trap",
+    "row",
+]
+
+PLAYER_INT_COLUMNS = [
+    "id",
+    "highest_own_rally_damage",
+    "highest_total_damage",
+]
+
+
 def get_players_df() -> pd.DataFrame:
     df = pd.read_sql(text("SELECT * FROM players;"), engine)
-    if df.empty:
-        return df
+    df = _normalize_player_df(df)
     return df.sort_values(
         by=["alliance_rank", "name"],
         ascending=[False, True],
@@ -187,3 +202,21 @@ def add_missing_players(names: list[str]):
             ),
             [{"name": name} for name in names],
         )
+
+
+def _normalize_player_df(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = df.copy()
+
+    for column in PLAYER_TEXT_COLUMNS:
+        if column not in normalized.columns:
+            normalized[column] = ""
+        else:
+            normalized[column] = normalized[column].fillna("").astype(str)
+
+    for column in PLAYER_INT_COLUMNS:
+        if column not in normalized.columns:
+            normalized[column] = 0
+        else:
+            normalized[column] = pd.to_numeric(normalized[column], errors="coerce").fillna(0).astype(int)
+
+    return normalized

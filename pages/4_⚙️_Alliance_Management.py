@@ -2,7 +2,7 @@ import pandas as pd
 import streamlit as st
 
 from auth import require_admin
-from src.data.db import init_db
+from src.data.db import engine, init_db
 from src.data.player_repository import (
     add_alias,
     add_player,
@@ -20,6 +20,7 @@ require_admin()
 init_db()
 
 st.write("### Alliance Member Management")
+st.caption(f"Connected database: `{engine.dialect.name}`")
 st.info(
     "Use Member List to maintain alliance member details. Alliance Rank, player profile fields, and IDs are editable there. "
     "The table starts sorted by Alliance Rank descending, and you can sort it further by clicking column headers. "
