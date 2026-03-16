@@ -33,3 +33,13 @@ CREATE TABLE IF NOT EXISTS damage (
     dmg BIGINT NOT NULL CHECK (dmg >= 0),
     PRIMARY KEY (event_id, player_id)
 );
+
+CREATE TABLE IF NOT EXISTS event_images (
+    id SERIAL PRIMARY KEY,
+    event_id INTEGER REFERENCES events(id),
+    bear_label TEXT NOT NULL,
+    original_filename TEXT NOT NULL,
+    storage_path TEXT NOT NULL,
+    public_url TEXT,
+    uploaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

@@ -8,6 +8,7 @@ from PIL import Image
 
 from auth import require_admin
 from src.data.db import init_db
+from src.data.event_image_repository import save_event_images
 from src.data.event_repository import (
     get_existing_damage_map,
     get_or_create_event_id,
@@ -21,6 +22,7 @@ from src.data.player_repository import (
     get_primary_player_names,
 )
 from src.services.bear_ocr import extract_bear_scores
+from src.services.image_storage import strato_storage_enabled, upload_event_images
 from src.services.matching import (
     aggregate_damage_updates,
     build_damage_updates,
@@ -200,6 +202,25 @@ if "ocr_results_grouped" in st.session_state and st.session_state.ocr_results_gr
 
                 to_upsert, skipped = diff_damage_updates(aggregated_updates, get_existing_damage_map(event_id))
                 saved_count = upsert_damage_rows(event_id, to_upsert)
+
+                image_names = set(df.get("source_image", pd.Series(dtype=str)).dropna().tolist())
+                trap_files = [file for file in uploaded_files if file.name in image_names]
+                if trap_files and strato_storage_enabled():
+                    try:
+                        with st.spinner("Uploading source screenshots to STRATO..."):
+                            uploaded_images = upload_event_images(trap_date, db_trap_label, trap_files)
+                        save_event_images(
+                            [
+                                {
+                                    "event_id": event_id,
+                                    "bear_label": db_trap_label,
+                                    **row,
+                                }
+                                for row in uploaded_images
+                            ]
+                        )
+                    except Exception as exc:
+                        st.warning(f"Scores were saved, but uploading screenshots failed: {exc}")
 
                 st.success(f"Saved {saved_count} entries for {trap_type} on {trap_date}. Skipped {skipped} duplicate score(s).")
                 del st.session_state.ocr_results_grouped[trap_type]
