@@ -1,10 +1,9 @@
 import streamlit as st
-import pandas as pd
 from datetime import date, timedelta
-from sqlalchemy import text
 
 from config.settings import BEAR_LABELS
-from db import engine, init_db
+from src.data.db import init_db
+from src.data.event_repository import events_count_for_trap, leaderboard_for_trap
 
 
 def start_date_for_window(window: str):
@@ -13,46 +12,6 @@ def start_date_for_window(window: str):
     if window == "Last 30 days":
         return date.today() - timedelta(days=30)
     return None
-
-
-def events_count_for_trap(bear_label: str, start_date):
-    with engine.begin() as conn:
-        return int(
-            conn.execute(
-                text(
-                    """
-                    SELECT COUNT(*)
-                    FROM events
-                    WHERE bear_label = :bear_label
-                      AND (:start_date IS NULL OR event_date >= :start_date);
-                    """
-                ),
-                {"bear_label": bear_label, "start_date": start_date},
-            ).scalar_one()
-        )
-
-
-def leaderboard_for_trap(bear_label: str, start_date) -> pd.DataFrame:
-    query = text(
-        """
-        SELECT
-            p.name,
-            COALESCE(SUM(CASE WHEN e.id IS NOT NULL THEN d.dmg ELSE 0 END), 0) AS total_damage,
-            COALESCE(SUM(CASE WHEN e.id IS NOT NULL AND d.dmg > 0 THEN 1 ELSE 0 END), 0) AS events_attended,
-            COALESCE(AVG(CASE WHEN e.id IS NOT NULL AND d.dmg > 0 THEN d.dmg END), 0) AS avg_damage_when_present
-        FROM players p
-        LEFT JOIN damage d
-          ON d.player_id = p.id
-        LEFT JOIN events e
-          ON e.id = d.event_id
-         AND e.bear_label = :bear_label
-         AND (:start_date IS NULL OR e.event_date >= :start_date)
-        GROUP BY p.id, p.name
-        HAVING COALESCE(SUM(CASE WHEN e.id IS NOT NULL THEN d.dmg ELSE 0 END), 0) > 0
-        ORDER BY total_damage DESC, p.name ASC;
-        """
-    )
-    return pd.read_sql(query, engine, params={"bear_label": bear_label, "start_date": start_date})
 
 
 def render_trap_leaderboard(bear_label: str, start_date):

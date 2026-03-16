@@ -1,10 +1,20 @@
 import os
 import streamlit as st
+from config.settings import load_dotenv
+
+# Ensure .env is loaded
+load_dotenv()
 
 
 def _admin_password() -> str:
-    if "ADMIN_PASSWORD" in st.secrets:
-        return st.secrets["ADMIN_PASSWORD"]
+    # Try to get from st.secrets first (Streamlit Cloud / Production)
+    try:
+        if "ADMIN_PASSWORD" in st.secrets:
+            return st.secrets["ADMIN_PASSWORD"]
+    except Exception:
+        pass
+    
+    # Fallback to environment variables (.env file via load_dotenv in settings.py)
     return os.getenv("ADMIN_PASSWORD", "")
 
 

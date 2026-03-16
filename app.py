@@ -1,5 +1,5 @@
 import streamlit as st
-from db import init_db
+from src.data.db import init_db
 
 st.set_page_config(page_title="Kingshot Bear Tracker", layout="wide")
 
