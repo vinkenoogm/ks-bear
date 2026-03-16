@@ -30,16 +30,32 @@ def preprocess_for_ocr(image: Image.Image, scale: int = 2) -> Image.Image:
 
 def detect_trap_type(image: Image.Image) -> str:
     width, height = image.size
-    title_crop = image.crop((int(width * 0.1), int(height * 0.18), int(width * 0.9), int(height * 0.28)))
-    processed = preprocess_for_ocr(title_crop, scale=3)
-    text = pytesseract.image_to_string(processed, config="--psm 6").strip()
+    crop_bands = [
+        (0.08, 0.20),
+        (0.10, 0.22),
+        (0.12, 0.24),
+        (0.18, 0.28),
+    ]
 
-    if re.search(r"[1Il|!]", text):
-        if re.search(r"2", text):
-            return "Trap 2"
-        return "Trap 1"
-    if re.search(r"[2Zz]", text):
+    for top_ratio, bottom_ratio in crop_bands:
+        title_crop = image.crop((int(width * 0.08), int(height * top_ratio), int(width * 0.92), int(height * bottom_ratio)))
+        processed = preprocess_for_ocr(title_crop, scale=3)
+        text = pytesseract.image_to_string(processed, config="--psm 6").strip()
+        detected = _trap_type_from_text(text)
+        if detected != "Unknown":
+            return detected
+
+    return "Unknown"
+
+
+def _trap_type_from_text(text: str) -> str:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    compact = re.sub(r"\s+", "", normalized)
+
+    if re.search(r"(trap|lirap|ilirap|llirap|irirap)[^A-Za-z0-9]{0,4}[2Zz}]", compact, re.IGNORECASE):
         return "Trap 2"
+    if re.search(r"(trap|lirap|ilirap|llirap|irirap)[^A-Za-z0-9]{0,4}[1Il!|\]]", compact, re.IGNORECASE):
+        return "Trap 1"
     return "Unknown"
 
 

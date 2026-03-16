@@ -49,17 +49,27 @@ def group_ocr_results(raw_results: dict, id_to_name: dict[int, str], combined_df
 
 
 def collect_entered_names(edited_df: pd.DataFrame) -> set[str]:
-    return {
+    names = {
         str(name).strip()
         for name in edited_df.get("matched_name", pd.Series(dtype=str)).tolist()
         if pd.notna(name) and str(name).strip() and str(name).strip() != "SELECT_MANUALLY"
     }
+    names.update(
+        str(name).strip()
+        for name in edited_df.get("new_member_name", pd.Series(dtype=str)).tolist()
+        if pd.notna(name) and str(name).strip()
+    )
+    return names
 
 
 def build_damage_updates(edited_df: pd.DataFrame, name_to_id: dict[str, int]) -> list[dict[str, int]]:
     updates = []
     for row in edited_df.itertuples():
         matched_name = getattr(row, "matched_name", None)
+        new_member_name = getattr(row, "new_member_name", None)
+        if matched_name == "SELECT_MANUALLY" and new_member_name and str(new_member_name).strip():
+            matched_name = str(new_member_name).strip()
+
         if not matched_name or not str(matched_name).strip() or matched_name == "SELECT_MANUALLY":
             continue
 

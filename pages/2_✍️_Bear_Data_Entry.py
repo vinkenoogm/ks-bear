@@ -4,6 +4,7 @@ from datetime import date
 
 import pandas as pd
 import streamlit as st
+from PIL import Image
 
 from auth import require_admin
 from src.data.db import init_db
@@ -15,7 +16,6 @@ from src.data.event_repository import (
 from src.data.player_repository import (
     add_missing_players,
     get_all_players_and_aliases,
-    get_player_count,
     get_player_id_to_name,
     get_players_df,
     get_primary_player_names,
@@ -28,6 +28,8 @@ from src.services.matching import (
     diff_damage_updates,
     group_ocr_results,
 )
+
+st.set_page_config(page_title="Bear Data Entry", layout="wide")
 
 
 def extract_uploaded_results(uploaded_files) -> dict:
@@ -89,7 +91,11 @@ def render_image_preview(df: pd.DataFrame, trap_type: str, uploaded_files):
     img_name = unique_images[st.session_state[index_key]]
     orig_file = next((item for item in uploaded_files if item.name == img_name), None)
     if orig_file:
-        st.image(orig_file, caption=img_name, width=350)
+        orig_file.seek(0)
+        preview_image = Image.open(orig_file)
+        preview_image = preview_image.copy()
+        preview_image.thumbnail((900, 700))
+        st.image(preview_image, caption=img_name)
 
 
 init_db()
@@ -121,11 +127,12 @@ if uploaded_files and st.button("Extract from images"):
 if "ocr_results_grouped" in st.session_state and st.session_state.ocr_results_grouped:
     st.write("### Extracted Scores - Verification")
     primary_names = get_primary_player_names()
+    member_options = ["SELECT_MANUALLY"] + primary_names
     trap_map = {"Trap 1": "Bear Trap 1", "Trap 2": "Bear Trap 2"}
 
     for trap_type, df in st.session_state.ocr_results_grouped.items():
         with st.expander(f"Results for {trap_type}", expanded=True):
-            col1, col2 = st.columns([1, 1])
+            col1, col2 = st.columns([3, 2])
 
             with col1:
                 trap_date = st.date_input(f"Event date for {trap_type}", value=date.today(), key=f"date_{trap_type}")
@@ -135,16 +142,24 @@ if "ocr_results_grouped" in st.session_state and st.session_state.ocr_results_gr
                 if "rank" in display_df.columns:
                     display_df["rank"] = pd.to_numeric(display_df["rank"], errors="coerce").fillna(0).astype(int)
                 display_df["damage_display"] = display_df["damage"].fillna(0).map(lambda value: f"{int(value):,}")
+                if "new_member_name" not in display_df.columns:
+                    display_df["new_member_name"] = ""
 
                 edited_ocr_df = st.data_editor(
                     display_df,
                     column_config={
                         "rank": st.column_config.NumberColumn("Rank", width="small", format="%d"),
                         "ocr_name": st.column_config.TextColumn("OCR Name (from image)", width="medium"),
-                        "matched_name": st.column_config.TextColumn(
-                            "Existing Player (type to add new)",
+                        "matched_name": st.column_config.SelectboxColumn(
+                            "Existing Player",
                             width="medium",
-                            help="Type an existing name to match, or enter a new member name to create it (game ID can be added later in Admin).",
+                            help="Choose an existing alliance member, or leave SELECT_MANUALLY and type a new member name in the next column.",
+                            options=member_options,
+                        ),
+                        "new_member_name": st.column_config.TextColumn(
+                            "New Member Name",
+                            width="medium",
+                            help="Only used when Existing Player is SELECT_MANUALLY.",
                         ),
                         "damage_display": st.column_config.TextColumn("Damage", width="medium"),
                         "damage": None,
@@ -152,7 +167,7 @@ if "ocr_results_grouped" in st.session_state and st.session_state.ocr_results_gr
                         "_name_key": None,
                     },
                     hide_index=True,
-                    width="stretch",
+                    width='stretch',
                     height="content",
                     num_rows="dynamic",
                     key=f"editor_{trap_type}",
