@@ -33,7 +33,7 @@ def render_trap_leaderboard(bear_label: str, start_date):
     st.caption(f"Total events in window: {total_events}")
     st.dataframe(
         df[["rank", "name", "total_damage", "events_attended", "attendance_rate", "avg_damage_when_present"]],
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         column_config={
             "rank": st.column_config.NumberColumn("Rank"),
@@ -43,6 +43,7 @@ def render_trap_leaderboard(bear_label: str, start_date):
             "attendance_rate": st.column_config.NumberColumn("Attendance %"),
             "avg_damage_when_present": st.column_config.NumberColumn("Avg Damage (Present)"),
         },
+        height="content",
     )
 
 
@@ -53,10 +54,12 @@ st.title("Leaderboards")
 window = st.selectbox("Time window", ["All-time", "Last 7 days", "Last 30 days"], index=0)
 window_start = start_date_for_window(window)
 
-left_tab, right_tab = st.tabs(BEAR_LABELS)
+left_col, right_col = st.columns(2)
 
-with left_tab:
+with left_col:
+    st.subheader(f"Leaderboard for {BEAR_LABELS[0]}")
     render_trap_leaderboard(BEAR_LABELS[0], window_start)
 
-with right_tab:
+with right_col:
+    st.subheader(f"Leaderboard for {BEAR_LABELS[1]}")
     render_trap_leaderboard(BEAR_LABELS[1], window_start)

@@ -89,6 +89,37 @@ def build_damage_updates(edited_df: pd.DataFrame, name_to_id: dict[str, int]) ->
     return updates
 
 
+def validate_review_rows(edited_df: pd.DataFrame) -> list[str]:
+    errors = []
+    resolved_names = []
+
+    for index, row in enumerate(edited_df.itertuples(index=False), start=1):
+        matched_name = getattr(row, "matched_name", None)
+        new_member_name = getattr(row, "new_member_name", None)
+
+        if matched_name == "SELECT_MANUALLY":
+            resolved_name = str(new_member_name).strip() if new_member_name and str(new_member_name).strip() else ""
+        else:
+            resolved_name = str(matched_name).strip() if matched_name and str(matched_name).strip() else ""
+
+        if not resolved_name:
+            errors.append(f"Row {index} is missing a valid username. Choose an existing member or type a new member name.")
+            continue
+
+        resolved_names.append((index, resolved_name.casefold(), resolved_name))
+
+    seen = {}
+    for index, normalized_name, display_name in resolved_names:
+        if normalized_name in seen:
+            errors.append(
+                f"Row {index} duplicates player '{display_name}' in this trap. Each player can only appear once per bear trap."
+            )
+        else:
+            seen[normalized_name] = index
+
+    return errors
+
+
 def aggregate_damage_updates(updates: list[dict[str, int]]) -> dict[int, int]:
     aggregated = {}
     for update in updates:

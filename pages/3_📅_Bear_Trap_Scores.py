@@ -43,7 +43,7 @@ with st.form("manage_events_form"):
         disabled=["id", "total_damage_display", "participant_count"],
         num_rows="fixed",
     )
-    manage_submit = st.form_submit_button("Save Event Changes", use_container_width=True)
+    manage_submit = st.form_submit_button("Save Event Changes", use_container_width=True, type="primary")
 
 if manage_submit:
     try:
@@ -126,23 +126,25 @@ if df.empty:
     st.info("No scores for the selected event.")
 else:
     st.caption("Edit damage values below to correct mistakes for the selected event, then save your changes.")
-    edited_scores_df = st.data_editor(
-        df,
-        use_container_width=False,
-        width="content",
-        column_config={
-            "rank": st.column_config.NumberColumn("Rank", format="%d", help="Position in leaderboard", width="small"),
-            "player_id": None,
-            "player": st.column_config.TextColumn("Player", width="medium"),
-            "damage": st.column_config.NumberColumn("Damage", format="%,d", min_value=0, width="medium"),
-        },
-        disabled=["rank", "player"],
-        hide_index=True,
-        num_rows="fixed",
-        key=f"event_scores_editor_{selected_event_id}",
-    )
+    with st.form(f"event_scores_form_{selected_event_id}"):
+        edited_scores_df = st.data_editor(
+            df,
+            use_container_width=False,
+            width="content",
+            column_config={
+                "rank": st.column_config.NumberColumn("Rank", format="%d", help="Position in leaderboard", width="small"),
+                "player_id": None,
+                "player": st.column_config.TextColumn("Player", width="medium"),
+                "damage": st.column_config.NumberColumn("Damage", format="%,d", min_value=0, width="medium"),
+            },
+            disabled=["rank", "player"],
+            hide_index=True,
+            num_rows="fixed",
+            key=f"event_scores_editor_{selected_event_id}",
+        )
+        save_scores_clicked = st.form_submit_button("Save Score Changes", type="primary")
 
-    if st.button("Save Score Changes", key=f"save_scores_{selected_event_id}"):
+    if save_scores_clicked:
         update_event_scores(selected_event_id, edited_scores_df)
         st.success("Saved updated scores for this event.")
         st.rerun()

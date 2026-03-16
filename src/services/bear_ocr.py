@@ -1,8 +1,9 @@
 import os
 import re
 from pathlib import Path
+from collections import Counter
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageFilter
 import pytesseract
 
 from config.settings import TESSERACT_CMD
@@ -28,6 +29,28 @@ def preprocess_for_ocr(image: Image.Image, scale: int = 2) -> Image.Image:
     return contrasted
 
 
+def looks_like_bear_screenshot(image: Image.Image) -> bool:
+    width, height = image.size
+    crops = [
+        image.crop((int(width * 0.08), int(height * 0.08), int(width * 0.92), int(height * 0.24))),
+        image.crop((int(width * 0.08), int(height * 0.16), int(width * 0.92), int(height * 0.34))),
+    ]
+    patterns = [
+        r"\btrap\s*[12]\b",
+        r"\bdamage\s+ranking\b",
+        r"\bpersonal\s+damage\s+rewards?\b",
+        r"\bdamage\s+points\b",
+    ]
+
+    for crop in crops:
+        processed = preprocess_for_ocr(crop, scale=2)
+        text = pytesseract.image_to_string(processed, config="--psm 6").strip().lower()
+        normalized = re.sub(r"\s+", " ", text)
+        if any(re.search(pattern, normalized) for pattern in patterns):
+            return True
+    return False
+
+
 def detect_trap_type(image: Image.Image) -> str:
     width, height = image.size
     crop_bands = [
@@ -37,30 +60,62 @@ def detect_trap_type(image: Image.Image) -> str:
         (0.18, 0.28),
     ]
 
+    votes = Counter()
     for top_ratio, bottom_ratio in crop_bands:
         title_crop = image.crop((int(width * 0.08), int(height * top_ratio), int(width * 0.92), int(height * bottom_ratio)))
-        processed = preprocess_for_ocr(title_crop, scale=3)
-        text = pytesseract.image_to_string(processed, config="--psm 6").strip()
-        detected = _trap_type_from_text(text)
-        if detected != "Unknown":
-            return detected
+        for processed in _title_preprocessing_variants(title_crop):
+            text = pytesseract.image_to_string(processed, config="--psm 6").strip()
+            detected = _trap_type_from_text(text)
+            if detected != "Unknown":
+                if _is_confident_trap_read(text, detected):
+                    return detected
+                votes[detected] += 1
+                other = "Trap 1" if detected == "Trap 2" else "Trap 2"
+                if votes[detected] >= 2 and votes[other] == 0:
+                    return detected
 
-    return "Unknown"
+    if not votes:
+        return "Unknown"
+    return votes.most_common(1)[0][0]
 
 
 def _trap_type_from_text(text: str) -> str:
     normalized = re.sub(r"\s+", " ", text).strip()
     compact = re.sub(r"\s+", "", normalized)
 
-    if re.search(r"(trap|lirap|ilirap|llirap|irirap)[^A-Za-z0-9]{0,4}[2Zz}]", compact, re.IGNORECASE):
+    if re.search(r"(trap|jtrap|jirap|lirap|ilirap|llirap|irirap)[^A-Za-z0-9]{0,4}[2Zz}]", compact, re.IGNORECASE):
         return "Trap 2"
-    if re.search(r"(trap|lirap|ilirap|llirap|irirap)[^A-Za-z0-9]{0,4}[1Il!|\]]", compact, re.IGNORECASE):
+    if re.search(r"(trap|jtrap|jirap|lirap|ilirap|llirap|irirap)[^A-Za-z0-9]{0,4}[1Il!|\])]", compact, re.IGNORECASE):
         return "Trap 1"
     return "Unknown"
 
 
+def _is_confident_trap_read(text: str, detected: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    digit = "1" if detected == "Trap 1" else "2"
+    if re.search(rf"\btrap\s*{digit}\b", normalized):
+        return True
+    if re.search(rf"\btrap\s*{digit}\b.*\bdamage\b.*\brewards?\b", normalized):
+        return True
+    return False
+
+
+def _title_preprocessing_variants(image: Image.Image):
+    base = preprocess_for_ocr(image, scale=3)
+    yield base
+
+    sharpened = base.filter(ImageFilter.SHARPEN)
+    yield sharpened
+
+    threshold = sharpened.point(lambda pixel: 255 if pixel > 170 else 0)
+    yield threshold
+
+
 def extract_bear_scores(image_path: str):
     image = Image.open(image_path)
+    if not looks_like_bear_screenshot(image):
+        return {"trap": "Excluded", "scores": [], "excluded": True}
+
     width, height = image.size
     trap_type = detect_trap_type(image)
 
@@ -119,7 +174,7 @@ def extract_bear_scores(image_path: str):
 
         results.append({"username": user, "damage": score})
 
-    return {"trap": trap_type, "scores": results}
+    return {"trap": trap_type, "scores": results, "excluded": False}
 
 
 def _extract_score(damage_line: str, user_line: str) -> int:

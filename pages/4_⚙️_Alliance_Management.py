@@ -59,20 +59,22 @@ with tab3:
         if aliases_df.empty:
             st.info("No aliases defined yet.")
         else:
-            edited_aliases = st.data_editor(
-                aliases_df,
-                column_config={
-                    "id": None,
-                    "player_id": None,
-                    "player_name": st.column_config.TextColumn("Player", disabled=True),
-                    "alias": st.column_config.TextColumn("Alias", disabled=True),
-                },
-                num_rows="dynamic",
-                use_container_width=True,
-                key="alias_editor",
-            )
+            with st.form("alias_editor_form"):
+                edited_aliases = st.data_editor(
+                    aliases_df,
+                    column_config={
+                        "id": None,
+                        "player_id": None,
+                        "player_name": st.column_config.TextColumn("Player", disabled=True),
+                        "alias": st.column_config.TextColumn("Alias", disabled=True),
+                    },
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    key="alias_editor",
+                )
+                delete_aliases_clicked = st.form_submit_button("Delete Selected Aliases", type="primary")
 
-            if st.button("Delete Selected Aliases"):
+            if delete_aliases_clicked:
                 current_ids = set(aliases_df["id"])
                 edited_ids = set(edited_aliases["id"].dropna())
                 deleted_ids = current_ids - edited_ids
@@ -137,7 +139,7 @@ with tab2:
                 step=1,
                 value=int(st.session_state.new_highest_total_damage),
             )
-        submitted = st.form_submit_button("Add/Update Player")
+        submitted = st.form_submit_button("Add/Update Player", type="primary")
         if submitted:
             if new_name:
                 add_player(
@@ -167,7 +169,7 @@ with tab2:
     st.info("CSV should have 'name' and 'game_id' columns. Existing Game IDs will be skipped.")
     with st.form("import_members_form"):
         uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
-        import_submitted = st.form_submit_button("Import CSV")
+        import_submitted = st.form_submit_button("Import CSV", type="primary")
 
     if import_submitted:
         if uploaded_file is None:
@@ -237,7 +239,7 @@ with tab1:
                 width="content",
                 key="member_editor",
             )
-            save_clicked = st.form_submit_button("Save Changes")
+            save_clicked = st.form_submit_button("Save Changes", type="primary")
 
         csv_data = df.to_csv(index=False).encode("utf-8")
         st.download_button(
