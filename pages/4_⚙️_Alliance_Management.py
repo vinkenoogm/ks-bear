@@ -165,34 +165,41 @@ with tab2:
     st.divider()
     st.write("### Import Members from CSV")
     st.info("CSV should have 'name' and 'game_id' columns. Existing Game IDs will be skipped.")
-    uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
-    if uploaded_file is not None:
-        try:
-            import_df = pd.read_csv(uploaded_file)
-            if "name" in import_df.columns and "game_id" in import_df.columns:
-                existing_players = get_players_df()
-                existing_gids = set(existing_players["game_id"].dropna().astype(str))
+    with st.form("import_members_form"):
+        uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
+        import_submitted = st.form_submit_button("Import CSV")
 
-                added_count = 0
-                skipped_count = 0
-                for _, row in import_df.iterrows():
-                    name = str(row["name"]).strip()
-                    gid = str(row["game_id"]).strip() if pd.notna(row["game_id"]) else ""
-                    if gid and gid in existing_gids:
-                        skipped_count += 1
+    if import_submitted:
+        if uploaded_file is None:
+            st.error("Choose a CSV file first.")
+        else:
+            try:
+                import_df = pd.read_csv(uploaded_file)
+                if "name" in import_df.columns and "game_id" in import_df.columns:
+                    existing_players = get_players_df()
+                    existing_gids = set(existing_players["game_id"].dropna().astype(str))
+
+                    added_count = 0
+                    skipped_count = 0
+                    for _, row in import_df.iterrows():
+                        name = str(row["name"]).strip()
+                        gid = str(row["game_id"]).strip() if pd.notna(row["game_id"]) else ""
+                        gid = gid or None
+                        if gid and gid in existing_gids:
+                            skipped_count += 1
+                        else:
+                            add_player(name, gid)
+                            added_count += 1
+
+                    if added_count > 0:
+                        st.success(f"Successfully imported {added_count} members. Skipped {skipped_count} existing Game IDs.")
+                        st.rerun()
                     else:
-                        add_player(name, gid)
-                        added_count += 1
-
-                if added_count > 0:
-                    st.success(f"Successfully imported {added_count} members. Skipped {skipped_count} existing Game IDs.")
-                    st.rerun()
+                        st.info(f"No new members added. Skipped {skipped_count} existing Game IDs.")
                 else:
-                    st.info(f"No new members added. Skipped {skipped_count} existing Game IDs.")
-            else:
-                st.error("CSV must contain 'name' and 'game_id' columns.")
-        except Exception as exc:
-            st.error(f"Error processing CSV: {exc}")
+                    st.error("CSV must contain 'name' and 'game_id' columns.")
+            except Exception as exc:
+                st.error(f"Error processing CSV: {exc}")
 
 with tab1:
     df = get_players_df()
