@@ -87,6 +87,7 @@ with tab3:
 
 with tab2:
     st.write("### Add Single Member")
+    st.caption("Only `Name` is required. All other fields are optional and can be filled in later.")
     if "new_name" not in st.session_state:
         st.session_state.new_name = ""
     if "new_game_id" not in st.session_state:
@@ -105,14 +106,37 @@ with tab2:
         st.session_state.new_row = ""
 
     with st.form("add_player_form", clear_on_submit=True):
-        new_name = st.text_input("Name", value=st.session_state.new_name)
-        new_game_id = st.text_input("Game ID (UID)", value=st.session_state.new_game_id)
-        new_alliance_rank = st.text_input("Alliance Rank", value=st.session_state.new_alliance_rank)
-        new_highest_own_rally_damage = st.number_input("Highest Damage In Own Rally", min_value=0, step=1, value=int(st.session_state.new_highest_own_rally_damage))
-        new_highest_total_damage = st.number_input("Highest Total Damage", min_value=0, step=1, value=int(st.session_state.new_highest_total_damage))
-        new_town_center_level = st.text_input("Town Center Level", value=st.session_state.new_town_center_level)
-        new_preferred_trap = st.text_input("Preferred Trap", value=st.session_state.new_preferred_trap)
-        new_row = st.text_input("Row", value=st.session_state.new_row)
+        top_col1, top_col2, top_col3 = st.columns(3)
+        with top_col1:
+            new_name = st.text_input("Name *", value=st.session_state.new_name)
+        with top_col2:
+            new_game_id = st.text_input("Game ID (UID)", value=st.session_state.new_game_id)
+        with top_col3:
+            new_alliance_rank = st.text_input("Alliance Rank", value=st.session_state.new_alliance_rank)
+
+        mid_col1, mid_col2, mid_col3 = st.columns(3)
+        with mid_col1:
+            new_town_center_level = st.text_input("Town Center Level", value=st.session_state.new_town_center_level)
+        with mid_col2:
+            new_preferred_trap = st.text_input("Preferred Trap", value=st.session_state.new_preferred_trap)
+        with mid_col3:
+            new_row = st.text_input("Row", value=st.session_state.new_row)
+
+        bottom_col1, bottom_col2 = st.columns(2)
+        with bottom_col1:
+            new_highest_own_rally_damage = st.number_input(
+                "Highest Damage In Own Rally",
+                min_value=0,
+                step=1,
+                value=int(st.session_state.new_highest_own_rally_damage),
+            )
+        with bottom_col2:
+            new_highest_total_damage = st.number_input(
+                "Highest Total Damage",
+                min_value=0,
+                step=1,
+                value=int(st.session_state.new_highest_total_damage),
+            )
         submitted = st.form_submit_button("Add/Update Player")
         if submitted:
             if new_name:

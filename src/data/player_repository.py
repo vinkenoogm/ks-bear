@@ -93,6 +93,7 @@ def add_player(
     preferred_trap: str = "",
     row: str = "",
 ):
+    normalized_game_id = _nullable_text(game_id)
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -129,7 +130,7 @@ def add_player(
             ),
             {
                 "name": name,
-                "game_id": game_id,
+                "game_id": normalized_game_id,
                 "alliance_rank": alliance_rank or "",
                 "highest_own_rally_damage": int(highest_own_rally_damage or 0),
                 "highest_total_damage": int(highest_total_damage or 0),
@@ -151,6 +152,7 @@ def update_player(
     preferred_trap: str = "",
     row: str = "",
 ):
+    normalized_game_id = _nullable_text(game_id)
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -169,7 +171,7 @@ def update_player(
             ),
             {
                 "name": name,
-                "game_id": game_id,
+                "game_id": normalized_game_id,
                 "alliance_rank": alliance_rank or "",
                 "highest_own_rally_damage": int(highest_own_rally_damage or 0),
                 "highest_total_damage": int(highest_total_damage or 0),
@@ -220,3 +222,10 @@ def _normalize_player_df(df: pd.DataFrame) -> pd.DataFrame:
             normalized[column] = pd.to_numeric(normalized[column], errors="coerce").fillna(0).astype(int)
 
     return normalized
+
+
+def _nullable_text(value):
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    return text_value or None
