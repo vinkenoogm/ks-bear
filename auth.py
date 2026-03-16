@@ -26,8 +26,10 @@ def require_admin():
         return
 
     st.info("Admin access is required for this page.")
-    pwd = st.text_input("Admin password", type="password")
-    if st.button("Log in", type="primary"):
+    with st.form("admin_login_form"):
+        pwd = st.text_input("Admin password", type="password")
+        submitted = st.form_submit_button("Log in", type="primary")
+    if submitted:
         if pwd and pwd == _admin_password():
             st.session_state.is_admin = True
             st.rerun()

@@ -174,30 +174,31 @@ with tab2:
             st.error("Choose a CSV file first.")
         else:
             try:
-                import_df = pd.read_csv(uploaded_file)
-                if "name" in import_df.columns and "game_id" in import_df.columns:
-                    existing_players = get_players_df()
-                    existing_gids = set(existing_players["game_id"].dropna().astype(str))
+                with st.spinner("Importing alliance members from CSV..."):
+                    import_df = pd.read_csv(uploaded_file)
+                    if "name" in import_df.columns and "game_id" in import_df.columns:
+                        existing_players = get_players_df()
+                        existing_gids = set(existing_players["game_id"].dropna().astype(str))
 
-                    added_count = 0
-                    skipped_count = 0
-                    for _, row in import_df.iterrows():
-                        name = str(row["name"]).strip()
-                        gid = str(row["game_id"]).strip() if pd.notna(row["game_id"]) else ""
-                        gid = gid or None
-                        if gid and gid in existing_gids:
-                            skipped_count += 1
+                        added_count = 0
+                        skipped_count = 0
+                        for _, row in import_df.iterrows():
+                            name = str(row["name"]).strip()
+                            gid = str(row["game_id"]).strip() if pd.notna(row["game_id"]) else ""
+                            gid = gid or None
+                            if gid and gid in existing_gids:
+                                skipped_count += 1
+                            else:
+                                add_player(name, gid)
+                                added_count += 1
+
+                        if added_count > 0:
+                            st.success(f"Successfully imported {added_count} members. Skipped {skipped_count} existing Game IDs.")
+                            st.rerun()
                         else:
-                            add_player(name, gid)
-                            added_count += 1
-
-                    if added_count > 0:
-                        st.success(f"Successfully imported {added_count} members. Skipped {skipped_count} existing Game IDs.")
-                        st.rerun()
+                            st.info(f"No new members added. Skipped {skipped_count} existing Game IDs.")
                     else:
-                        st.info(f"No new members added. Skipped {skipped_count} existing Game IDs.")
-                else:
-                    st.error("CSV must contain 'name' and 'game_id' columns.")
+                        st.error("CSV must contain 'name' and 'game_id' columns.")
             except Exception as exc:
                 st.error(f"Error processing CSV: {exc}")
 
@@ -217,36 +218,34 @@ with tab1:
             "highest_total_damage",
             "id",
         ]
-        edited_df = st.data_editor(
-            df,
-            column_order=column_order,
-            column_config={
-                "id": None,
-                "alliance_rank": st.column_config.TextColumn("Alliance Rank", width="medium"),
-                "name": st.column_config.TextColumn("Player Name", required=True, width="medium"),
-                "game_id": st.column_config.TextColumn("Game ID (UID)", width="medium"),
-                "town_center_level": st.column_config.TextColumn("Town Center Level", width="medium"),
-                "preferred_trap": st.column_config.TextColumn("Preferred Trap", width="medium"),
-                "row": st.column_config.TextColumn("Row", width="small"),
-                "highest_own_rally_damage": st.column_config.NumberColumn("Highest Damage In Own Rally", format="%d", min_value=0, width="large"),
-                "highest_total_damage": st.column_config.NumberColumn("Highest Total Damage", format="%d", min_value=0, width="large"),
-            },
-            num_rows="dynamic",
-            width="content",
-            key="member_editor",
-        )
-
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            save_clicked = st.button("Save Changes")
-        with col2:
-            csv_data = df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                label="Export to CSV",
-                data=csv_data,
-                file_name="alliance_members.csv",
-                mime="text/csv",
+        with st.form("member_list_form"):
+            edited_df = st.data_editor(
+                df,
+                column_order=column_order,
+                column_config={
+                    "id": None,
+                    "alliance_rank": st.column_config.TextColumn("Alliance Rank", width="medium"),
+                    "name": st.column_config.TextColumn("Player Name", required=True, width="medium"),
+                    "game_id": st.column_config.TextColumn("Game ID (UID)", width="medium"),
+                    "town_center_level": st.column_config.TextColumn("Town Center Level", width="medium"),
+                    "preferred_trap": st.column_config.TextColumn("Preferred Trap", width="medium"),
+                    "row": st.column_config.TextColumn("Row", width="small"),
+                    "highest_own_rally_damage": st.column_config.NumberColumn("Highest Damage In Own Rally", format="%d", min_value=0, width="large"),
+                    "highest_total_damage": st.column_config.NumberColumn("Highest Total Damage", format="%d", min_value=0, width="large"),
+                },
+                num_rows="dynamic",
+                width="content",
+                key="member_editor",
             )
+            save_clicked = st.form_submit_button("Save Changes")
+
+        csv_data = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="Export to CSV",
+            data=csv_data,
+            file_name="alliance_members.csv",
+            mime="text/csv",
+        )
 
         if save_clicked:
             current_ids = set(df["id"])
