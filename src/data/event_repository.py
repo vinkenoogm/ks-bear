@@ -241,17 +241,19 @@ def update_event_scores(event_id: int, edited_scores_df: pd.DataFrame):
         rows.append({"event_id": event_id, "player_id": player_id, "dmg": max(0, int(damage))})
 
     with engine.begin() as conn:
-        conn.execute(
-            text(
-                """
-                INSERT INTO damage (event_id, player_id, dmg)
-                VALUES (:event_id, :player_id, :dmg)
-                ON CONFLICT (event_id, player_id)
-                DO UPDATE SET dmg = EXCLUDED.dmg;
-                """
-            ),
-            rows,
-        )
+        conn.execute(text("DELETE FROM damage WHERE event_id = :eid"), {"eid": event_id})
+        if rows:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO damage (event_id, player_id, dmg)
+                    VALUES (:event_id, :player_id, :dmg)
+                    ON CONFLICT (event_id, player_id)
+                    DO UPDATE SET dmg = EXCLUDED.dmg;
+                    """
+                ),
+                rows,
+            )
         _refresh_event_stats(conn, event_id)
 
 

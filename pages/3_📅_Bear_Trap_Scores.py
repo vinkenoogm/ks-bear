@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 from auth import is_admin_logged_in, render_admin_login
 
+from src.data.player_repository import add_missing_players, get_players_df
 from src.data.event_repository import (
     load_all_events,
     load_scores,
@@ -24,6 +25,8 @@ st.info(
 
 def prepare_score_editor_df(df):
     editor_df = df.copy()
+    if "player" in editor_df.columns:
+        editor_df["player_name"] = editor_df["player"].fillna("").astype(str)
     if "damage" in editor_df.columns:
         editor_df["damage"] = pd.to_numeric(editor_df["damage"], errors="coerce").fillna(0).astype("int64")
         editor_df["damage_display"] = editor_df["damage"].map(lambda value: f"{int(value):,}")
@@ -32,6 +35,17 @@ def prepare_score_editor_df(df):
 
 def parse_score_editor_df(edited_scores_df):
     parsed_df = edited_scores_df.copy()
+    parsed_df["player_name"] = parsed_df.get("player_name", pd.Series(dtype=str)).fillna("").astype(str).str.strip()
+    blank_players = parsed_df["player_name"].eq("")
+    if blank_players.any():
+        invalid_rows = ", ".join(str(index + 1) for index in parsed_df.index[blank_players])
+        raise ValueError(f"Player name is required. Invalid row(s): {invalid_rows}")
+
+    duplicate_players = parsed_df["player_name"].str.casefold().duplicated(keep=False)
+    if duplicate_players.any():
+        invalid_rows = ", ".join(str(index + 1) for index in parsed_df.index[duplicate_players])
+        raise ValueError(f"Player names must be unique within the event. Duplicate row(s): {invalid_rows}")
+
     raw_damage = (
         parsed_df.get("damage_display", pd.Series(dtype=str))
         .fillna("0")
@@ -45,7 +59,27 @@ def parse_score_editor_df(edited_scores_df):
         raise ValueError(f"Damage must be a whole number. Invalid row(s): {invalid_rows}")
 
     parsed_df["damage"] = raw_damage.astype("int64")
-    return parsed_df.drop(columns=["damage_display"], errors="ignore")
+    return parsed_df.drop(columns=["damage_display", "player"], errors="ignore")
+
+
+def resolve_score_editor_players(parsed_scores_df):
+    resolved_df = parsed_scores_df.copy()
+    existing_players = get_players_df()[["id", "name"]]
+    existing_names = set(existing_players["name"].tolist())
+    new_names = sorted(name for name in resolved_df["player_name"].tolist() if name not in existing_names)
+    if new_names:
+        add_missing_players(new_names)
+        existing_players = get_players_df()[["id", "name"]]
+
+    name_to_id = dict(zip(existing_players["name"], existing_players["id"]))
+    resolved_df["player_id"] = resolved_df["player_name"].map(name_to_id)
+    unresolved = resolved_df["player_id"].isna()
+    if unresolved.any():
+        invalid_rows = ", ".join(str(index + 1) for index in resolved_df.index[unresolved])
+        raise ValueError(f"Unable to resolve player names. Invalid row(s): {invalid_rows}")
+
+    resolved_df["player_id"] = resolved_df["player_id"].astype(int)
+    return resolved_df[["player_id", "damage"]]
 
 st.subheader("Manage Events")
 orig_events_df = load_all_events()
@@ -167,7 +201,7 @@ else:
     )
 
     if is_admin_logged_in():
-        st.caption("Edit damage values below to correct mistakes for the selected event, then save your changes.")
+        st.caption("Edit rows below to correct mistakes or add players for the selected event, then save your changes.")
         with st.form(f"event_scores_form_{selected_event_id}"):
             edited_scores_df = st.data_editor(
                 editor_df,
@@ -176,13 +210,18 @@ else:
                 column_config={
                     "rank": st.column_config.NumberColumn("Rank", format="%d", help="Position in leaderboard", width="small"),
                     "player_id": None,
-                    "player": st.column_config.TextColumn("Player", width="medium"),
+                    "player": None,
+                    "player_name": st.column_config.TextColumn(
+                        "Player",
+                        width="medium",
+                        help="Editable. Existing player names are recommended; a new player will be created if needed.",
+                    ),
                     "damage_display": st.column_config.TextColumn("Damage", width="medium", help="Editable. Use digits; commas are optional."),
                     "damage": None,
                 },
-                disabled=["rank", "player", "player_id"],
+                disabled=["rank", "player_id"],
                 hide_index=True,
-                num_rows="fixed",
+                num_rows="dynamic",
                 key=f"event_scores_editor_{selected_event_id}",
             )
             save_scores_clicked = st.form_submit_button("Save Score Changes", type="primary")
@@ -190,7 +229,8 @@ else:
         if save_scores_clicked:
             try:
                 parsed_scores_df = parse_score_editor_df(edited_scores_df)
-                update_event_scores(selected_event_id, parsed_scores_df)
+                resolved_scores_df = resolve_score_editor_players(parsed_scores_df)
+                update_event_scores(selected_event_id, resolved_scores_df)
                 st.success("Saved updated scores for this event.")
                 st.rerun()
             except ValueError as exc:
