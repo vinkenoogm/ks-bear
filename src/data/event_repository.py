@@ -158,6 +158,7 @@ def save_event_changes(orig_events_df: pd.DataFrame, edited_events_df: pd.DataFr
     with engine.begin() as conn:
         for event_id, row in edited_map.items():
             if row.get("delete"):
+                conn.execute(text("DELETE FROM event_images WHERE event_id = :eid"), {"eid": event_id})
                 conn.execute(text("DELETE FROM damage WHERE event_id = :eid"), {"eid": event_id})
                 conn.execute(text("DELETE FROM events WHERE id = :eid"), {"eid": event_id})
                 deleted += 1

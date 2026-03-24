@@ -82,10 +82,11 @@ def detect_trap_type(image: Image.Image) -> str:
 def _trap_type_from_text(text: str) -> str:
     normalized = re.sub(r"\s+", " ", text).strip()
     compact = re.sub(r"\s+", "", normalized)
+    trap_prefix = r"(trap|jtrap|jirap|lirap|ilirap|llirap|irirap)"
 
-    if re.search(r"(trap|jtrap|jirap|lirap|ilirap|llirap|irirap)[^A-Za-z0-9]{0,4}[2Zz}]", compact, re.IGNORECASE):
+    if re.search(rf"{trap_prefix}[^A-Za-z0-9]{{0,4}}[2Zz]", compact, re.IGNORECASE):
         return "Trap 2"
-    if re.search(r"(trap|jtrap|jirap|lirap|ilirap|llirap|irirap)[^A-Za-z0-9]{0,4}[1Il!|\])]", compact, re.IGNORECASE):
+    if re.search(rf"{trap_prefix}[^A-Za-z0-9]{{0,4}}[1Il!|]", compact, re.IGNORECASE):
         return "Trap 1"
     return "Unknown"
 

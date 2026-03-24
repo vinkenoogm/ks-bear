@@ -18,15 +18,13 @@ def _admin_password() -> str:
     return os.getenv("ADMIN_PASSWORD", "")
 
 
-def require_admin():
-    if st.session_state.get("is_admin"):
-        if st.sidebar.button("Log out admin"):
-            st.session_state.is_admin = False
-            st.rerun()
-        return
+def is_admin_logged_in() -> bool:
+    return bool(st.session_state.get("is_admin"))
 
-    st.info("Admin access is required for this page.")
-    with st.form("admin_login_form"):
+
+def render_admin_login(section_key: str = "admin"):
+    st.info("Admin access is required for this section.")
+    with st.form(f"{section_key}_login_form"):
         pwd = st.text_input("Admin password", type="password")
         submitted = st.form_submit_button("Log in", type="primary")
     if submitted:
@@ -34,4 +32,15 @@ def require_admin():
             st.session_state.is_admin = True
             st.rerun()
         st.error("Invalid password.")
+
+
+def require_admin():
+    if is_admin_logged_in():
+        if st.sidebar.button("Log out admin"):
+            st.session_state.is_admin = False
+            st.rerun()
+        return
+
+    st.info("Admin access is required for this page.")
+    render_admin_login("admin")
     st.stop()

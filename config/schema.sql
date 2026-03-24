@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS players (
 
 CREATE TABLE IF NOT EXISTS player_aliases (
     id SERIAL PRIMARY KEY,
-    player_id INTEGER REFERENCES players(id),
+    player_id INTEGER REFERENCES players(id) ON DELETE CASCADE,
     alias TEXT UNIQUE NOT NULL
 );
 
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE TABLE IF NOT EXISTS damage (
-    event_id INTEGER REFERENCES events(id),
+    event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
     player_id INTEGER REFERENCES players(id),
     dmg BIGINT NOT NULL CHECK (dmg >= 0),
     PRIMARY KEY (event_id, player_id)
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS damage (
 
 CREATE TABLE IF NOT EXISTS event_images (
     id SERIAL PRIMARY KEY,
-    event_id INTEGER REFERENCES events(id),
+    event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
     bear_label TEXT NOT NULL,
     original_filename TEXT NOT NULL,
     storage_path TEXT NOT NULL,

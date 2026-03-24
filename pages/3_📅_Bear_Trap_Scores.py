@@ -1,4 +1,5 @@
 import streamlit as st
+from auth import is_admin_logged_in, render_admin_login
 
 from src.data.event_repository import (
     load_all_events,
@@ -21,40 +22,43 @@ st.info(
 
 st.subheader("Manage Events")
 orig_events_df = load_all_events()
-manage_events_df = orig_events_df.copy()
-manage_events_df["total_damage_display"] = manage_events_df["total_damage"].map(lambda value: f"{int(value):,}")
+if is_admin_logged_in():
+    manage_events_df = orig_events_df.copy()
+    manage_events_df["total_damage_display"] = manage_events_df["total_damage"].map(lambda value: f"{int(value):,}")
 
-with st.form("manage_events_form"):
-    edited_events_df = st.data_editor(
-        manage_events_df.assign(delete=False),
-        use_container_width=False,
-        width="content",
-        hide_index=True,
-        column_config={
-            "id": st.column_config.NumberColumn("ID", format="%d", help="Event ID", width="small"),
-            "event_date": st.column_config.DateColumn("Date", help="Event date (YYYY-MM-DD)", width="medium"),
-            "bear_label": st.column_config.SelectboxColumn("Trap", options=["Bear Trap 1", "Bear Trap 2"], help="Trap type", width="medium"),
-            "total_damage_display": st.column_config.TextColumn("Total Damage", width="medium"),
-            "participant_count": st.column_config.NumberColumn("Players", format="%d", width="small"),
-            "rallies": st.column_config.NumberColumn("Rallies", format="%d", width="small"),
-            "delete": st.column_config.CheckboxColumn("Delete", help="Mark to delete this event and its scores", width="small"),
-            "total_damage": None,
-        },
-        disabled=["id", "total_damage_display", "participant_count"],
-        num_rows="fixed",
-    )
-    manage_submit = st.form_submit_button("Save Event Changes", use_container_width=True, type="primary")
+    with st.form("manage_events_form"):
+        edited_events_df = st.data_editor(
+            manage_events_df.assign(delete=False),
+            use_container_width=False,
+            width="content",
+            hide_index=True,
+            column_config={
+                "id": st.column_config.NumberColumn("ID", format="%d", help="Event ID", width="small"),
+                "event_date": st.column_config.DateColumn("Date", help="Event date (YYYY-MM-DD)", width="medium"),
+                "bear_label": st.column_config.SelectboxColumn("Trap", options=["Bear Trap 1", "Bear Trap 2"], help="Trap type", width="medium"),
+                "total_damage_display": st.column_config.TextColumn("Total Damage", width="medium"),
+                "participant_count": st.column_config.NumberColumn("Players", format="%d", width="small"),
+                "rallies": st.column_config.NumberColumn("Rallies", format="%d", width="small"),
+                "delete": st.column_config.CheckboxColumn("Delete", help="Mark to delete this event and its scores", width="small"),
+                "total_damage": None,
+            },
+            disabled=["id", "total_damage_display", "participant_count"],
+            num_rows="fixed",
+        )
+        manage_submit = st.form_submit_button("Save Event Changes", use_container_width=True, type="primary")
 
-if manage_submit:
-    try:
-        updated, deleted, skipped_dupes = save_event_changes(orig_events_df, edited_events_df)
-        msg = f"Updated {updated} | Deleted {deleted}"
-        if skipped_dupes:
-            msg += f" | Skipped {skipped_dupes} duplicate change(s)"
-        st.success(msg)
-        st.rerun()
-    except Exception as exc:
-        st.error(f"Failed to save changes: {exc}")
+    if manage_submit:
+        try:
+            updated, deleted, skipped_dupes = save_event_changes(orig_events_df, edited_events_df)
+            msg = f"Updated {updated} | Deleted {deleted}"
+            if skipped_dupes:
+                msg += f" | Skipped {skipped_dupes} duplicate change(s)"
+            st.success(msg)
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Failed to save changes: {exc}")
+else:
+    render_admin_login("manage_events")
 
 if orig_events_df.empty:
     st.info("No events found. Add data on the Data Entry page first.")
@@ -125,30 +129,6 @@ st.subheader(f"Results: {selected_trap_label} on {selected_date}")
 if df.empty:
     st.info("No scores for the selected event.")
 else:
-    st.caption("Edit damage values below to correct mistakes for the selected event, then save your changes.")
-    with st.form(f"event_scores_form_{selected_event_id}"):
-        edited_scores_df = st.data_editor(
-            df,
-            use_container_width=False,
-            width="content",
-            column_config={
-                "rank": st.column_config.NumberColumn("Rank", format="%d", help="Position in leaderboard", width="small"),
-                "player_id": None,
-                "player": st.column_config.TextColumn("Player", width="medium"),
-                "damage": st.column_config.NumberColumn("Damage", format="%,d", min_value=0, width="medium"),
-            },
-            disabled=["rank", "player"],
-            hide_index=True,
-            num_rows="fixed",
-            key=f"event_scores_editor_{selected_event_id}",
-        )
-        save_scores_clicked = st.form_submit_button("Save Score Changes", type="primary")
-
-    if save_scores_clicked:
-        update_event_scores(selected_event_id, edited_scores_df)
-        st.success("Saved updated scores for this event.")
-        st.rerun()
-
     csv = df.to_csv(index=False)
     st.download_button(
         label="Download CSV",
@@ -157,3 +137,42 @@ else:
         mime="text/csv",
         use_container_width=False,
     )
+
+    if is_admin_logged_in():
+        st.caption("Edit damage values below to correct mistakes for the selected event, then save your changes.")
+        with st.form(f"event_scores_form_{selected_event_id}"):
+            edited_scores_df = st.data_editor(
+                df,
+                use_container_width=False,
+                width="content",
+                column_config={
+                    "rank": st.column_config.NumberColumn("Rank", format="%d", help="Position in leaderboard", width="small"),
+                    "player_id": None,
+                    "player": st.column_config.TextColumn("Player", width="medium"),
+                    "damage": st.column_config.NumberColumn("Damage", format="%,d", min_value=0, width="medium"),
+                },
+                disabled=["rank", "player"],
+                hide_index=True,
+                num_rows="fixed",
+                key=f"event_scores_editor_{selected_event_id}",
+            )
+            save_scores_clicked = st.form_submit_button("Save Score Changes", type="primary")
+
+        if save_scores_clicked:
+            update_event_scores(selected_event_id, edited_scores_df)
+            st.success("Saved updated scores for this event.")
+            st.rerun()
+    else:
+        st.caption("Log in as admin to edit saved scores.")
+        st.dataframe(
+            df,
+            use_container_width=False,
+            width="content",
+            hide_index=True,
+            column_config={
+                "rank": st.column_config.NumberColumn("Rank", format="%d", help="Position in leaderboard", width="small"),
+                "player_id": None,
+                "player": st.column_config.TextColumn("Player", width="medium"),
+                "damage": st.column_config.NumberColumn("Damage", format="%,d", width="medium"),
+            },
+        )

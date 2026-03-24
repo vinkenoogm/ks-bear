@@ -168,7 +168,7 @@ if "ocr_results_grouped" in st.session_state and st.session_state.ocr_results_gr
         with st.expander(f"Results for {trap_type}", expanded=True):
             st.info(
                 "Review every row before saving. Choose an existing username from the dropdown, or leave "
-                "`SELECT_MANUALLY` and type a new member name if the member does not exist yet. You can delete rows"
+                "`SELECT_MANUALLY` and type a new member name in the right-most column if the member does not exist yet. You can delete rows"
                 "by clicking to the left of the row to select, then press the trash icon on the top-right of the table."
                 " Every row must resolve to exactly one username, and the same player cannot appear twice in one trap."
             )

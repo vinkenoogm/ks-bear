@@ -7,3 +7,7 @@ __pycache__/
 .streamlit/secrets.toml
 img/
 scripts/
+scheduling/
+tests/
+data/
+.Rhistory
