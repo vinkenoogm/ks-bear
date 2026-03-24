@@ -29,19 +29,21 @@ def render_trap_leaderboard(bear_label: str, start_date):
 
     df["avg_damage_when_present"] = df["avg_damage_when_present"].round(0).astype("int64")
     df["rank"] = df["total_damage"].rank(method="dense", ascending=False).astype("int64")
+    df["total_damage_display"] = df["total_damage"].map(lambda value: f"{int(value):,}")
+    df["avg_damage_when_present_display"] = df["avg_damage_when_present"].map(lambda value: f"{int(value):,}")
 
     st.caption(f"Total events in window: {total_events}")
     st.dataframe(
-        df[["rank", "name", "total_damage", "events_attended", "attendance_rate", "avg_damage_when_present"]],
-        width='stretch',
+        df[["rank", "name", "total_damage_display", "events_attended", "attendance_rate", "avg_damage_when_present_display"]],
+        use_container_width=True,
         hide_index=True,
         column_config={
             "rank": st.column_config.NumberColumn("Rank"),
             "name": st.column_config.TextColumn("Player"),
-            "total_damage": st.column_config.NumberColumn("Total Damage", format="%,d"),
+            "total_damage_display": st.column_config.TextColumn("Total Damage"),
             "events_attended": st.column_config.NumberColumn("Events Attended"),
             "attendance_rate": st.column_config.NumberColumn("Attendance %"),
-            "avg_damage_when_present": st.column_config.NumberColumn("Avg Damage (Present)", format="%,d"),
+            "avg_damage_when_present_display": st.column_config.TextColumn("Avg Damage (Present)"),
         },
         height="content",
     )
