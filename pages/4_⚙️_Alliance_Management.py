@@ -69,7 +69,7 @@ with tab3:
                         "alias": st.column_config.TextColumn("Alias", disabled=True),
                     },
                     num_rows="dynamic",
-                    use_container_width=True,
+                    width="stretch",
                     key="alias_editor",
                 )
                 delete_aliases_clicked = st.form_submit_button("Delete Selected Aliases", type="primary")

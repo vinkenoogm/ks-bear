@@ -90,7 +90,6 @@ if is_admin_logged_in():
     with st.form("manage_events_form"):
         edited_events_df = st.data_editor(
             manage_events_df.assign(delete=False),
-            use_container_width=False,
             width="content",
             hide_index=True,
             column_config={
@@ -106,7 +105,7 @@ if is_admin_logged_in():
             disabled=["id", "total_damage_display", "participant_count"],
             num_rows="fixed",
         )
-        manage_submit = st.form_submit_button("Save Event Changes", use_container_width=True, type="primary")
+        manage_submit = st.form_submit_button("Save Event Changes", width="stretch", type="primary")
 
     if manage_submit:
         try:
@@ -158,7 +157,6 @@ selectable_events_df["total_damage_display"] = selectable_events_df["total_damag
 with table_col:
     event_selection = st.dataframe(
         selectable_events_df,
-        use_container_width=False,
         width="content",
         hide_index=True,
         on_select="rerun",
@@ -197,7 +195,7 @@ else:
         data=csv,
         file_name=f"event_scores_{selected_date}_{'trap1' if selected_trap_label.endswith('1') else 'trap2'}.csv",
         mime="text/csv",
-        use_container_width=False,
+        width="content",
     )
 
     if is_admin_logged_in():
@@ -205,7 +203,6 @@ else:
         with st.form(f"event_scores_form_{selected_event_id}"):
             edited_scores_df = st.data_editor(
                 editor_df,
-                use_container_width=False,
                 width="content",
                 column_config={
                     "rank": st.column_config.NumberColumn("Rank", format="%d", help="Position in leaderboard", width="small"),
@@ -239,7 +236,6 @@ else:
         st.caption("Log in as admin to edit saved scores.")
         st.dataframe(
             editor_df.drop(columns=["damage"], errors="ignore"),
-            use_container_width=False,
             width="content",
             hide_index=True,
             column_config={

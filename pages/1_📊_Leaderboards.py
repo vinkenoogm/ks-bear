@@ -35,15 +35,15 @@ def render_trap_leaderboard(bear_label: str, start_date):
     st.caption(f"Total events in window: {total_events}")
     st.dataframe(
         df[["rank", "name", "total_damage_display", "events_attended", "attendance_rate", "avg_damage_when_present_display"]],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
-            "rank": st.column_config.NumberColumn("Rank"),
-            "name": st.column_config.TextColumn("Player"),
-            "total_damage_display": st.column_config.TextColumn("Total Damage"),
-            "events_attended": st.column_config.NumberColumn("Events Attended"),
-            "attendance_rate": st.column_config.NumberColumn("Attendance %"),
-            "avg_damage_when_present_display": st.column_config.TextColumn("Avg Damage (Present)"),
+            "rank": st.column_config.NumberColumn("Rank", width="small"),
+            "name": st.column_config.TextColumn("Player", width="medium"),
+            "total_damage_display": st.column_config.TextColumn("Total Damage", width="medium"),
+            "events_attended": st.column_config.NumberColumn("Events Attended", width="small"),
+            "attendance_rate": st.column_config.NumberColumn("Attendance %", width="small"),
+            "avg_damage_when_present_display": st.column_config.TextColumn("Avg Damage (Present)", width="medium"),
         },
         height="content",
     )
