@@ -38,10 +38,10 @@ def render_trap_leaderboard(bear_label: str, start_date):
         column_config={
             "rank": st.column_config.NumberColumn("Rank"),
             "name": st.column_config.TextColumn("Player"),
-            "total_damage": st.column_config.NumberColumn("Total Damage"),
+            "total_damage": st.column_config.NumberColumn("Total Damage", format="%,d"),
             "events_attended": st.column_config.NumberColumn("Events Attended"),
             "attendance_rate": st.column_config.NumberColumn("Attendance %"),
-            "avg_damage_when_present": st.column_config.NumberColumn("Avg Damage (Present)"),
+            "avg_damage_when_present": st.column_config.NumberColumn("Avg Damage (Present)", format="%,d"),
         },
         height="content",
     )
