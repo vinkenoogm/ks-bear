@@ -1,3 +1,4 @@
+import pandas as pd
 import streamlit as st
 from auth import is_admin_logged_in, render_admin_login
 
@@ -19,6 +20,32 @@ st.info(
     "Use Choose Event filters to find an event, then click a row to view its results below. "
     "In the results section, damage values are editable so you can fix saved score mistakes."
 )
+
+
+def prepare_score_editor_df(df):
+    editor_df = df.copy()
+    if "damage" in editor_df.columns:
+        editor_df["damage"] = pd.to_numeric(editor_df["damage"], errors="coerce").fillna(0).astype("int64")
+        editor_df["damage_display"] = editor_df["damage"].map(lambda value: f"{int(value):,}")
+    return editor_df
+
+
+def parse_score_editor_df(edited_scores_df):
+    parsed_df = edited_scores_df.copy()
+    raw_damage = (
+        parsed_df.get("damage_display", pd.Series(dtype=str))
+        .fillna("0")
+        .astype(str)
+        .str.replace(",", "", regex=False)
+        .str.strip()
+    )
+    invalid_damage = raw_damage.eq("") | ~raw_damage.str.fullmatch(r"\d+")
+    if invalid_damage.any():
+        invalid_rows = ", ".join(str(index + 1) for index in parsed_df.index[invalid_damage])
+        raise ValueError(f"Damage must be a whole number. Invalid row(s): {invalid_rows}")
+
+    parsed_df["damage"] = raw_damage.astype("int64")
+    return parsed_df.drop(columns=["damage_display"], errors="ignore")
 
 st.subheader("Manage Events")
 orig_events_df = load_all_events()
@@ -129,6 +156,7 @@ st.subheader(f"Results: {selected_trap_label} on {selected_date}")
 if df.empty:
     st.info("No scores for the selected event.")
 else:
+    editor_df = prepare_score_editor_df(df)
     csv = df.to_csv(index=False)
     st.download_button(
         label="Download CSV",
@@ -142,16 +170,17 @@ else:
         st.caption("Edit damage values below to correct mistakes for the selected event, then save your changes.")
         with st.form(f"event_scores_form_{selected_event_id}"):
             edited_scores_df = st.data_editor(
-                df,
+                editor_df,
                 use_container_width=False,
                 width="content",
                 column_config={
                     "rank": st.column_config.NumberColumn("Rank", format="%d", help="Position in leaderboard", width="small"),
                     "player_id": None,
                     "player": st.column_config.TextColumn("Player", width="medium"),
-                    "damage": st.column_config.NumberColumn("Damage", format="%,d", min_value=0, width="medium"),
+                    "damage_display": st.column_config.TextColumn("Damage", width="medium", help="Editable. Use digits; commas are optional."),
+                    "damage": None,
                 },
-                disabled=["rank", "player"],
+                disabled=["rank", "player", "player_id"],
                 hide_index=True,
                 num_rows="fixed",
                 key=f"event_scores_editor_{selected_event_id}",
@@ -159,13 +188,17 @@ else:
             save_scores_clicked = st.form_submit_button("Save Score Changes", type="primary")
 
         if save_scores_clicked:
-            update_event_scores(selected_event_id, edited_scores_df)
-            st.success("Saved updated scores for this event.")
-            st.rerun()
+            try:
+                parsed_scores_df = parse_score_editor_df(edited_scores_df)
+                update_event_scores(selected_event_id, parsed_scores_df)
+                st.success("Saved updated scores for this event.")
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
     else:
         st.caption("Log in as admin to edit saved scores.")
         st.dataframe(
-            df,
+            editor_df.drop(columns=["damage"], errors="ignore"),
             use_container_width=False,
             width="content",
             hide_index=True,
@@ -173,6 +206,6 @@ else:
                 "rank": st.column_config.NumberColumn("Rank", format="%d", help="Position in leaderboard", width="small"),
                 "player_id": None,
                 "player": st.column_config.TextColumn("Player", width="medium"),
-                "damage": st.column_config.NumberColumn("Damage", format="%,d", width="medium"),
+                "damage_display": st.column_config.TextColumn("Damage", width="medium"),
             },
         )

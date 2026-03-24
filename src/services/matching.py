@@ -77,12 +77,10 @@ def build_damage_updates(edited_df: pd.DataFrame, name_to_id: dict[str, int]) ->
         if not player_id:
             continue
 
-        final_damage = getattr(row, "damage", 0)
-        if (pd.isna(final_damage) or final_damage == 0) and hasattr(row, "damage_display"):
-            try:
-                final_damage = int(re.sub(r"[^0-9]", "", str(row.damage_display)))
-            except Exception:
-                final_damage = 0
+        final_damage = _parse_damage_value(
+            getattr(row, "damage_display", None),
+            fallback=getattr(row, "damage", 0),
+        )
 
         if final_damage > 0:
             updates.append({"player_id": int(player_id), "damage": int(final_damage)})
@@ -104,6 +102,17 @@ def validate_review_rows(edited_df: pd.DataFrame) -> list[str]:
 
         if not resolved_name:
             errors.append(f"Row {index} is missing a valid username. Choose an existing member or type a new member name.")
+            continue
+
+        try:
+            _parse_damage_value(
+                getattr(row, "damage_display", None),
+                fallback=getattr(row, "damage", 0),
+            )
+        except ValueError:
+            errors.append(
+                f"Row {index} has an invalid damage value. Use digits only, with optional thousands separators."
+            )
             continue
 
         resolved_names.append((index, resolved_name.casefold(), resolved_name))
@@ -149,3 +158,27 @@ def _normalized_name_key(row) -> str:
     else:
         base = str(row.get("ocr_name", ""))
     return re.sub(r"\s+", " ", base.strip()).lower()
+
+
+def _parse_damage_value(value, fallback=0) -> int:
+    if value is None or pd.isna(value):
+        return _coerce_damage_int(fallback)
+
+    normalized = str(value).strip()
+    if not normalized:
+        return 0
+
+    normalized = normalized.replace(",", "")
+    if not normalized.isdigit():
+        raise ValueError(f"Invalid damage value: {value}")
+    return int(normalized)
+
+
+def _coerce_damage_int(value) -> int:
+    if value is None or pd.isna(value):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        digits = re.sub(r"[^0-9]", "", str(value))
+        return int(digits) if digits else 0
