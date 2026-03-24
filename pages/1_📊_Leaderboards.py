@@ -5,6 +5,8 @@ from config.settings import BEAR_LABELS
 from src.data.db import init_db
 from src.data.event_repository import events_count_for_trap, leaderboard_for_trap
 
+st.set_page_config(page_title="Leaderboards", layout="wide")
+
 
 def start_date_for_window(window: str):
     if window == "Last 7 days":
